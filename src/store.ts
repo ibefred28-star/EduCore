@@ -1,7 +1,8 @@
 import { create } from 'zustand';
-import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { AppData, Branding, Config, Role, SyncConfig, User } from './types';
 import { DEFAULT_BRANDING, DEFAULT_CONFIG, DEFAULT_DATA } from './constants';
+import { db } from './firebase';
+import { doc, onSnapshot, setDoc, getDoc } from 'firebase/firestore';
 
 const KEY = 'educore_data_v2';
 const BRAND = 'educore_brand_v2';
@@ -16,7 +17,9 @@ interface StoreState {
   branding: Branding;
   config: Config;
   syncConfig: SyncConfig | null;
-  supabase: SupabaseClient | null;
+  
+  // Internal tracking
+  unsubscribeSnapshot: (() => void) | null;
   
   // Actions
   login: (role: Role, id: string, pass: string) => boolean;
@@ -45,8 +48,8 @@ export const useStore = create<StoreState>((set, get) => ({
   data: safeParse<AppData>(KEY, DEFAULT_DATA),
   branding: safeParse<Branding>(BRAND, DEFAULT_BRANDING),
   config: safeParse<Config>(CONFIG, DEFAULT_CONFIG),
-  syncConfig: safeParse<SyncConfig | null>(SYNC, null),
-  supabase: null,
+  syncConfig: safeParse<SyncConfig | null>(SYNC, { enabled: true } as any),
+  unsubscribeSnapshot: null,
 
   login: (role, id, pass) => {
     const data = get().data;
@@ -83,12 +86,13 @@ export const useStore = create<StoreState>((set, get) => ({
 
   logout: () => {
     set({ currentUser: null, currentRole: null });
+    const unsub = get().unsubscribeSnapshot;
+    if (unsub) unsub();
+    set({ unsubscribeSnapshot: null });
   },
 
   updateData: (updater) => {
     set(state => {
-      // Create a shallow copy, then apply updates. 
-      // This is basic, for nested updates we spread manually or use a simple clone
       const newData = JSON.parse(JSON.stringify(state.data));
       const returnedData = updater(newData);
       const finalData = returnedData || newData;
@@ -114,45 +118,62 @@ export const useStore = create<StoreState>((set, get) => ({
     } else {
       localStorage.removeItem(SYNC);
     }
-    set({ syncConfig, supabase: null });
+    set({ syncConfig });
     get().initSync();
   },
 
   initSync: () => {
-    const syncConfig = get().syncConfig;
-    if (!syncConfig || !syncConfig.url || !syncConfig.key) return;
+    const state = get();
+    
+    // Clear existing subscription
+    if (state.unsubscribeSnapshot) {
+      state.unsubscribeSnapshot();
+      set({ unsubscribeSnapshot: null });
+    }
+    
+    if (!state.syncConfig) return;
 
     try {
-      const supabaseClient = createClient(syncConfig.url, syncConfig.key);
-      set({ supabase: supabaseClient });
+      const docRef = doc(db, 'app_state', 'global');
       
-      supabaseClient.channel('educore-realtime')
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'educore_state' }, payload => {
-          const newData = (payload.new as any)?.state;
-          if (newData) {
-            localStorage.setItem(KEY, JSON.stringify(newData));
-            set({ data: newData });
-          }
-        })
-        .subscribe();
-        
-      supabaseClient.from('educore_state').select('state').eq('id', 1).maybeSingle().then(r => {
-        if (r.data && (r.data as any).state) {
-          localStorage.setItem(KEY, JSON.stringify((r.data as any).state));
-          set({ data: (r.data as any).state });
+      // Initial fetch to get latest
+      getDoc(docRef).then((snapshot) => {
+        if (snapshot.exists() && snapshot.data().state) {
+          const newState = snapshot.data().state;
+          localStorage.setItem(KEY, JSON.stringify(newState));
+          set({ data: newState });
+        } else {
+          // Initialize if empty
+          get().pushSync(get().data);
         }
       });
+      
+      // Set up real-time listener
+      const unsub = onSnapshot(docRef, (snapshot) => {
+        if (snapshot.exists() && snapshot.data().state) {
+          const newState = snapshot.data().state;
+          localStorage.setItem(KEY, JSON.stringify(newState));
+          set({ data: newState });
+        }
+      }, (error) => {
+        console.warn('Firestore sync error:', error);
+      });
+      
+      set({ unsubscribeSnapshot: unsub });
     } catch (e) {
       console.warn('Online sync unavailable', e);
     }
   },
 
-  pushSync: async (data) => {
-    const supabase = get().supabase;
-    if (!supabase) return;
+  pushSync: (data) => {
+    if (!get().syncConfig) return;
     
     try {
-      await supabase.from('educore_state').upsert({ id: 1, state: data, updated_at: new Date().toISOString() });
+      const docRef = doc(db, 'app_state', 'global');
+      setDoc(docRef, {
+        state: data,
+        updatedAt: new Date().toISOString()
+      }, { merge: true });
     } catch (e) {
       console.warn('Offline mode: sync failed');
     }

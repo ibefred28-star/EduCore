@@ -1,0 +1,25 @@
+{
+  "entities": {
+    "AppState": {
+      "title": "AppState",
+      "description": "Global application state",
+      "type": "object",
+      "properties": {
+        "state": {
+          "type": "object",
+          "description": "The complete AppData object"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    }
+  },
+  "firestore": {
+    "/app_state/global": {
+      "schema": { "$ref": "#/entities/AppState" },
+      "description": "Global application state document"
+    }
+  }
+}
