@@ -3,10 +3,11 @@ import { useStore } from './store';
 import Login from './views/Login';
 import Dashboard from './views/Dashboard';
 import CBT from './views/CBT';
+import SuperAdminDashboard from './views/SuperAdminDashboard';
 import { ToastRenderer } from './components/ui';
 
 export default function App() {
-  const { currentUser, activeExamId, branding } = useStore();
+  const { currentUser, currentRole, activeExamId, branding } = useStore();
 
   useEffect(() => {
     // Inject branding CSS variables at root level for global usage
@@ -22,9 +23,11 @@ export default function App() {
       
       {!currentUser && <Login />}
       
-      {currentUser && !activeExamId && <Dashboard />}
+      {currentUser && currentRole === 'superadmin' && <SuperAdminDashboard />}
+
+      {currentUser && currentRole !== 'superadmin' && !activeExamId && <Dashboard />}
       
-      {currentUser && activeExamId && <CBT />}
+      {currentUser && currentRole !== 'superadmin' && activeExamId && <CBT />}
     </>
   );
 }

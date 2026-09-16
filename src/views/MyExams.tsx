@@ -1,6 +1,7 @@
 import { useStore } from '../store';
 import { useToastStore } from '../store/toast';
 import { Button, Card } from '../components/ui';
+import { Student } from '../types';
 
 export default function MyExams() {
   const { data, currentUser } = useStore();
@@ -10,16 +11,23 @@ export default function MyExams() {
     return data.results.filter(r => r.studentId === currentUser?.id && r.examId === id).length;
   };
 
-  const availableExams = data.exams.filter(e => e.status === 'active' && getAttemptCount(e.id) < Math.max(1, e.attempts || 1));
+  const studentClass = currentUser ? (currentUser as Student).class : '';
+
+  const availableExams = data.exams.filter(e => {
+    if (e.status !== 'active') return false;
+    if (getAttemptCount(e.id) >= Math.max(1, e.attempts || 1)) return false;
+    if (e.targetClasses && e.targetClasses.length > 0) {
+      if (!e.targetClasses.includes(studentClass)) return false;
+    }
+    return true;
+  });
 
   const startExam = (id: string | number) => {
-    // We will trigger a state change in App.tsx by setting an active exam ID in the store
-    // Let's add setActiveExam to the store
     useStore.setState({ activeExamId: id });
   };
 
   if (!availableExams.length) {
-    return <p className="text-slate-500">No available exams.</p>;
+    return <p className="text-slate-500">No available exams for your class.</p>;
   }
 
   return (

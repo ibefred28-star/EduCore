@@ -1,4 +1,10 @@
-export type Role = 'student' | 'teacher' | 'admin';
+export type Role = 'student' | 'teacher' | 'admin' | 'superadmin';
+
+export interface Tenant {
+  id: string;
+  name: string;
+  createdAt: string;
+}
 
 export interface UserBase {
   id: string;
@@ -48,6 +54,7 @@ export interface Exam {
   attempts: number;
   status: 'active' | 'draft' | 'scheduled' | 'closed';
   start?: string;
+  targetClasses?: string[];
   questions: Question[];
   createdBy: string;
 }

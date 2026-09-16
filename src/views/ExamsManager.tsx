@@ -22,8 +22,10 @@ export default function ExamsManager() {
   const [deleteConfirm, setDeleteConfirm] = useState<string | number | null>(null);
   
   const [formData, setFormData] = useState({
-    title: '', subject: '', type: 'CA 1', duration: 30, attempts: 1, status: 'draft', start: '', questionsStr: '', template: 'mcq'
+    title: '', subject: '', type: 'CA 1', duration: 30, attempts: 1, status: 'draft', start: '', questionsStr: '', template: 'mcq', targetClasses: [] as string[]
   });
+
+  const uniqueClasses = Array.from(new Set(data.students.map(s => s.class).filter(Boolean)));
 
   const openForm = (id?: string | number) => {
     if (id) {
@@ -31,17 +33,24 @@ export default function ExamsManager() {
       if (e) {
         setFormData({
           title: e.title, subject: e.subject, type: e.type, duration: e.duration, attempts: e.attempts || 1, status: e.status, start: e.start || '',
-          questionsStr: JSON.stringify(e.questions, null, 2), template: 'mcq'
+          questionsStr: JSON.stringify(e.questions, null, 2), template: 'mcq', targetClasses: e.targetClasses || []
         });
       }
     } else {
       setFormData({
         title: '', subject: data.subjects[0] || '', type: 'CA 1', duration: 30, attempts: 1, status: 'draft', start: '',
-        questionsStr: JSON.stringify(questionTemplates().mcq, null, 2), template: 'mcq'
+        questionsStr: JSON.stringify(questionTemplates().mcq, null, 2), template: 'mcq', targetClasses: []
       });
     }
     setEditingId(id || null);
     setIsOpen(true);
+  };
+
+  const toggleClass = (c: string) => {
+    setFormData(p => ({
+      ...p,
+      targetClasses: p.targetClasses.includes(c) ? p.targetClasses.filter(x => x !== c) : [...p.targetClasses, c]
+    }));
   };
 
   const loadTemplate = () => {
@@ -64,6 +73,10 @@ export default function ExamsManager() {
     try {
       const qs = JSON.parse(formData.questionsStr);
       if (!validateQuestions(qs)) throw new Error('Invalid questions');
+      if (!formData.targetClasses.length) {
+        showToast('Please select at least one target class');
+        return;
+      }
       
       updateData(draft => {
         const payload: Exam = {
@@ -75,6 +88,7 @@ export default function ExamsManager() {
           attempts: Math.max(1, Math.min(20, Number(formData.attempts) || 1)),
           status: formData.status as any,
           start: formData.start,
+          targetClasses: formData.targetClasses,
           questions: qs,
           createdBy: editingId ? (draft.exams.find(e => e.id === editingId)?.createdBy || currentUser!.id) : currentUser!.id
         };
@@ -127,8 +141,8 @@ export default function ExamsManager() {
           <thead>
             <tr className="bg-slate-50 border-b border-slate-200 text-left">
               <th className="p-3 font-semibold">Title</th>
+              <th className="p-3 font-semibold">Classes</th>
               <th className="p-3 font-semibold">Subject</th>
-              <th className="p-3 font-semibold">Type</th>
               <th className="p-3 font-semibold">Status</th>
               <th className="p-3 font-semibold">Questions</th>
               <th className="p-3 font-semibold">Actions</th>
@@ -140,8 +154,8 @@ export default function ExamsManager() {
               return (
                 <tr key={e.id} className="border-b border-slate-200 last:border-0 hover:bg-slate-50">
                   <td className="p-3">{e.title}</td>
+                  <td className="p-3 text-sm text-slate-600">{e.targetClasses?.join(', ') || 'All'}</td>
                   <td className="p-3">{e.subject}</td>
-                  <td className="p-3">{e.type}</td>
                   <td className="p-3">
                     <Select 
                       className="min-w-[120px] m-0" 
@@ -174,7 +188,7 @@ export default function ExamsManager() {
       <Modal isOpen={isOpen} onClose={() => setIsOpen(false)}>
         <h2 className="text-xl font-bold mt-0">{editingId ? 'Edit' : 'Create'} Exam</h2>
         
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div>
             <Label>Title</Label>
             <Input value={formData.title} onChange={e => setFormData(p => ({ ...p, title: e.target.value }))} />
@@ -210,7 +224,24 @@ export default function ExamsManager() {
           </div>
         </div>
 
-        <Label>Start time (optional)</Label>
+        <div className="mt-4">
+          <Label>Target Classes</Label>
+          <div className="flex flex-wrap gap-2 mt-1">
+            {uniqueClasses.map(c => (
+              <label key={c} className="flex items-center gap-2 bg-slate-100 p-2 rounded-md cursor-pointer hover:bg-slate-200">
+                <input 
+                  type="checkbox" 
+                  checked={formData.targetClasses.includes(c)}
+                  onChange={() => toggleClass(c)}
+                />
+                <span className="text-sm">{c}</span>
+              </label>
+            ))}
+            {!uniqueClasses.length && <p className="text-sm text-slate-500">No classes found in student data. Please add students first.</p>}
+          </div>
+        </div>
+
+        <Label className="mt-4 block">Start time (optional)</Label>
         <Input type="datetime-local" value={formData.start} onChange={e => setFormData(p => ({ ...p, start: e.target.value }))} />
         
         <Label>Bulk Upload / Question Template</Label>

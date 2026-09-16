@@ -1,14 +1,21 @@
 import express from 'express';
 import path from 'path';
 import { createServer as createViteServer } from 'vite';
+import { db } from './src/db/index.ts';
+import { sql } from 'drizzle-orm';
 
 async function startServer() {
   const app = express();
   const PORT = 3000;
 
   // API route for health
-  app.get("/api/health", (req, res) => {
-    res.json({ status: "ok" });
+  app.get("/api/health", async (req, res) => {
+    try {
+      const result = await db.execute(sql`SELECT 1 as is_alive`);
+      res.json({ status: "ok", postgres: result.rows[0].is_alive === 1 });
+    } catch (e: any) {
+      res.status(500).json({ status: "error", error: e.message });
+    }
   });
 
   // Vite middleware for development
