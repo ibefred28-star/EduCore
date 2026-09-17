@@ -27,12 +27,22 @@ function answerIsCorrect(q: any, a: any) {
 }
 
 export default function ResultsView({ studentOnly = false }: { studentOnly?: boolean }) {
-  const { data, currentUser } = useStore();
+  const { data, currentUser, currentRole } = useStore();
   const showToast = useToastStore(s => s.showToast);
   
   const [reviewResult, setReviewResult] = useState<any>(null);
 
-  const rs = studentOnly ? data.results.filter(r => r.studentId === currentUser?.id) : data.results;
+  const teacherClasses = currentRole === 'teacher' ? (currentUser as any)?.classes || [] : [];
+
+  let rs = data.results;
+  if (studentOnly || currentRole === 'student') {
+    rs = data.results.filter(r => r.studentId === currentUser?.id);
+  } else if (currentRole === 'teacher') {
+    rs = data.results.filter(r => {
+      const student = data.students.find(s => s.id === r.studentId);
+      return student && teacherClasses.includes(student.class);
+    });
+  }
 
   const openReview = (r: any) => {
     if (!r.answers) return showToast('Answer review is not available for this result');

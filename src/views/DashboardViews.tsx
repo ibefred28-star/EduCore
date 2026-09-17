@@ -17,61 +17,107 @@ function getComponentMax(type: string, config: any) {
 export default function DashboardHome() {
   const { data, currentRole, currentUser, config } = useStore();
   
+  const teacherClasses = currentRole === 'teacher' ? (currentUser as any)?.classes || [] : [];
+  
+  // Filter students: if teacher, only students in their classes
+  const students = currentRole === 'teacher' 
+    ? data.students.filter(s => teacherClasses.includes(s.class))
+    : data.students;
+
+  // Filter results: if student, only theirs. if teacher, only students in their classes.
   const results = currentRole === 'student' 
     ? data.results.filter(r => r.studentId === currentUser?.id)
+    : currentRole === 'teacher'
+    ? data.results.filter(r => {
+        const student = data.students.find(s => s.id === r.studentId);
+        return student && teacherClasses.includes(student.class);
+      })
     : data.results;
 
   const chartData = {
-    labels: data.subjects,
+    labels: data.subjects.length > 0 ? data.subjects : ['None'],
     datasets: [
       {
         label: 'Average %',
-        data: data.subjects.map(s => {
-          const rs = data.results.filter(r => r.subject === s && getComponentMax(r.type, config));
+        data: data.subjects.length > 0 ? data.subjects.map(s => {
+          const rs = results.filter(r => r.subject === s && getComponentMax(r.type, config));
           if (!rs.length) return 0;
           return Math.round(rs.reduce((a, r) => a + (r.scaled || 0) / (getComponentMax(r.type, config) || 1) * 100, 0) / rs.length);
-        }),
-        backgroundColor: 'rgba(54, 162, 235, 0.5)',
+        }) : [0],
+        backgroundColor: 'rgba(99, 102, 241, 0.8)',
+        borderRadius: 8,
       }
     ]
   };
 
   return (
-    <>
-      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-[15px]">
-        <Card>
-          <span className="text-slate-500">Students</span>
-          <h2 className="text-3xl font-bold my-[6px]">{data.students.length}</h2>
-        </Card>
-        <Card>
-          <span className="text-slate-500">Teachers</span>
-          <h2 className="text-3xl font-bold my-[6px]">{data.teachers.length}</h2>
-        </Card>
-        <Card>
-          <span className="text-slate-500">Exams</span>
-          <h2 className="text-3xl font-bold my-[6px]">{data.exams.length}</h2>
-        </Card>
-        <Card>
-          <span className="text-slate-500">Results</span>
-          <h2 className="text-3xl font-bold my-[6px]">{results.length}</h2>
-        </Card>
-      </div>
+    <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-4 auto-rows-[minmax(140px,auto)]">
       
-      <Card className="mt-[18px]">
-        <h3 className="mt-0 text-xl font-bold mb-4">Performance Overview</h3>
-        <div className="h-[300px]">
+      {/* Welcome Widget (spans 2 cols) */}
+      <div className="col-span-1 md:col-span-2 bg-slate-900 rounded-[24px] p-6 text-white shadow-sm flex flex-col justify-center relative overflow-hidden">
+        <div className="relative z-10">
+          <h2 className="text-3xl font-bold mb-2 mt-0 text-white">Welcome back, {currentUser?.name || 'User'}</h2>
+          <p className="text-slate-300 m-0">Here's your {currentRole} overview for today.</p>
+        </div>
+        <div className="absolute right-0 bottom-0 opacity-10 transform translate-x-1/4 translate-y-1/4">
+          <svg width="200" height="200" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
+        </div>
+      </div>
+
+      {/* Stats Widgets */}
+      {currentRole !== 'student' && (
+        <div className="bg-white rounded-[24px] p-6 shadow-sm flex flex-col justify-center border border-slate-100">
+          <span className="text-slate-500 font-medium mb-1">
+            {currentRole === 'teacher' ? 'My Students' : 'Total Students'}
+          </span>
+          <h2 className="text-4xl font-extrabold text-slate-800 m-0">{students.length}</h2>
+        </div>
+      )}
+
+      {currentRole === 'admin' && (
+        <div className="bg-white rounded-[24px] p-6 shadow-sm flex flex-col justify-center border border-slate-100">
+          <span className="text-slate-500 font-medium mb-1">Total Teachers</span>
+          <h2 className="text-4xl font-extrabold text-slate-800 m-0">{data.teachers.length}</h2>
+        </div>
+      )}
+
+      <div className="bg-indigo-50 rounded-[24px] p-6 shadow-sm flex flex-col justify-center text-indigo-900 border border-indigo-100">
+        <span className="font-medium mb-1 opacity-80">Available Exams</span>
+        <h2 className="text-4xl font-extrabold m-0">{data.exams.length}</h2>
+      </div>
+
+      {/* Chart Widget (spans full or 3 cols, and taller) */}
+      <div className="col-span-1 md:col-span-3 lg:col-span-3 row-span-2 bg-white rounded-[24px] p-6 shadow-sm border border-slate-100">
+        <div className="flex justify-between items-center mb-4">
+          <h3 className="text-lg font-bold text-slate-800 m-0">Performance Overview</h3>
+        </div>
+        <div className="h-[250px] w-full">
           <Bar 
             data={chartData} 
             options={{ 
               responsive: true, 
               maintainAspectRatio: false,
               plugins: { legend: { display: false } },
-              scales: { y: { beginAtZero: true, max: 100 } }
+              scales: { 
+                y: { beginAtZero: true, max: 100, grid: { color: '#f1f5f9' } },
+                x: { grid: { display: false } }
+              }
             }} 
           />
         </div>
-      </Card>
-    </>
+      </div>
+
+      {/* Additional Stats */}
+      <div className="bg-emerald-500 rounded-[24px] p-6 shadow-sm flex flex-col justify-center text-white">
+        <span className="text-emerald-100 font-medium mb-1">Recorded Results</span>
+        <h2 className="text-4xl font-extrabold m-0">{results.length}</h2>
+      </div>
+
+      <div className="bg-amber-100 rounded-[24px] p-6 shadow-sm flex flex-col justify-center text-amber-900 border border-amber-200">
+        <span className="font-medium mb-1 opacity-80">Active Subjects</span>
+        <h2 className="text-4xl font-extrabold m-0">{data.subjects.length}</h2>
+      </div>
+    </div>
   );
 }
 

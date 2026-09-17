@@ -32,7 +32,9 @@ interface StoreState {
   updateConfig: (config: Config) => void;
   updateSyncConfig: (syncConfig: SyncConfig | null) => void;
   initSync: () => void;
-  createTenant: (id: string, name: string, adminId: string, adminPass: string) => Promise<boolean>;
+  createTenant: (id: string, name: string, adminId: string, adminPass: string) => Promise<{success: boolean, error?: string}>;
+  deleteTenant: (id: string) => Promise<boolean>;
+  toggleTenantStatus: (id: string) => Promise<boolean>;
 }
 
 const safeParse = <T>(key: string, fallback: T): T => {
@@ -307,7 +309,7 @@ export const useStore = create<StoreState>((set, get) => {
 
     createTenant: async (id: string, name: string, adminId: string, adminPass: string) => {
       const state = get();
-      if (state.currentRole !== 'superadmin') return false;
+      if (state.currentRole !== 'superadmin') return { success: false, error: 'Unauthorized' };
       
       const cleanId = id.trim().toLowerCase();
       
@@ -324,7 +326,7 @@ export const useStore = create<StoreState>((set, get) => {
           if (tenants.find(t => t.id === cleanId)) {
             throw new Error("Tenant already exists");
           }
-          tenants.push({ id: cleanId, name, createdAt: new Date().toISOString() });
+          tenants.push({ id: cleanId, name, createdAt: new Date().toISOString(), status: 'active' });
           t.set(tenantsRef, { tenants }, { merge: true });
         });
         
@@ -344,9 +346,60 @@ export const useStore = create<StoreState>((set, get) => {
           updatedAt: new Date().toISOString()
         });
         
+        return { success: true };
+      } catch (e: any) {
+        if (e.message === "Tenant already exists") {
+          return { success: false, error: 'A school with this ID already exists.' };
+        }
+        console.warn("Failed to create tenant:", e);
+        return { success: false, error: 'An unexpected error occurred while creating the school.' };
+      }
+    },
+
+    deleteTenant: async (id: string) => {
+      const state = get();
+      if (state.currentRole !== 'superadmin') return false;
+      
+      try {
+        const tenantsRef = doc(db, 'app_state', 'GLOBAL_TENANTS');
+        await runTransaction(db, async (t) => {
+          const snap = await t.get(tenantsRef);
+          let tenants: Tenant[] = [];
+          if (snap.exists() && snap.data().tenants) {
+            tenants = snap.data().tenants;
+          }
+          tenants = tenants.filter(t => t.id !== id);
+          t.set(tenantsRef, { tenants }, { merge: true });
+        });
         return true;
       } catch (e) {
-        console.error("Failed to create tenant:", e);
+        console.error("Failed to delete tenant:", e);
+        return false;
+      }
+    },
+
+    toggleTenantStatus: async (id: string) => {
+      const state = get();
+      if (state.currentRole !== 'superadmin') return false;
+      
+      try {
+        const tenantsRef = doc(db, 'app_state', 'GLOBAL_TENANTS');
+        await runTransaction(db, async (t) => {
+          const snap = await t.get(tenantsRef);
+          let tenants: Tenant[] = [];
+          if (snap.exists() && snap.data().tenants) {
+            tenants = snap.data().tenants;
+          }
+          const index = tenants.findIndex(t => t.id === id);
+          if (index !== -1) {
+            const currentStatus = tenants[index].status || 'active';
+            tenants[index].status = currentStatus === 'active' ? 'suspended' : 'active';
+          }
+          t.set(tenantsRef, { tenants }, { merge: true });
+        });
+        return true;
+      } catch (e) {
+        console.error("Failed to toggle tenant status:", e);
         return false;
       }
     }

@@ -56,11 +56,20 @@ export default function Dashboard() {
   return (
     <div className="min-h-screen bg-[var(--bg)] text-[var(--text)] flex flex-col md:flex-row">
       <aside 
-        className="md:fixed md:left-0 md:top-0 md:bottom-0 w-full md:w-[250px] p-[18px] overflow-auto text-white"
+        className="md:fixed md:left-0 md:top-0 md:bottom-0 w-full md:w-[250px] p-[18px] overflow-auto text-white flex flex-col"
         style={{ backgroundColor: branding.primary }}
       >
-        <div className="text-xl font-extrabold my-[5px] mb-[20px]">{branding.schoolName}</div>
-        <div className="flex flex-col gap-1">
+        <div className="flex items-center gap-3 mb-[20px] my-[5px]">
+          {branding.logo && (
+            <img 
+              src={branding.logo} 
+              alt="Logo" 
+              className="w-10 h-10 object-cover rounded-full bg-white"
+            />
+          )}
+          <div className="text-xl font-extrabold">{branding.schoolName}</div>
+        </div>
+        <div className="flex flex-col gap-1 flex-1">
           {navItems.map(item => (
             <div 
               key={item}

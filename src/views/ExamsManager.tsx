@@ -244,20 +244,78 @@ export default function ExamsManager() {
         <Label className="mt-4 block">Start time (optional)</Label>
         <Input type="datetime-local" value={formData.start} onChange={e => setFormData(p => ({ ...p, start: e.target.value }))} />
         
-        <Label>Bulk Upload / Question Template</Label>
-        <div className="flex gap-2">
-          <Select value={formData.template} onChange={e => setFormData(p => ({ ...p, template: e.target.value }))}>
-            <option value="mcq">MCQ template</option>
-            <option value="fill_blank">Fill-in-the-blanks template</option>
-            <option value="true_false">True/False template</option>
-            <option value="diagram">Diagram-based template</option>
-          </Select>
-          <Button variant="secondary" onClick={loadTemplate}>Load</Button>
+        <div className="mt-6 border border-slate-200 rounded-lg p-4 bg-slate-50">
+          <h3 className="font-bold text-lg mb-4 mt-0">Questions Editor</h3>
+          <p className="text-sm text-slate-600 mb-4">Edit the JSON array directly below, or use the Quick Add tool to generate JSON for you.</p>
+          
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+            <div className="flex flex-col gap-2">
+              <Label>Quick Add MCQ</Label>
+              <Input 
+                id="qa_q"
+                placeholder="Question text..." 
+              />
+              <div className="grid grid-cols-2 gap-2">
+                <Input id="qa_opt0" placeholder="Option A" />
+                <Input id="qa_opt1" placeholder="Option B" />
+                <Input id="qa_opt2" placeholder="Option C" />
+                <Input id="qa_opt3" placeholder="Option D" />
+              </div>
+              <Select id="qa_ans">
+                <option value="0">Answer: Option A</option>
+                <option value="1">Answer: Option B</option>
+                <option value="2">Answer: Option C</option>
+                <option value="3">Answer: Option D</option>
+              </Select>
+              <Button onClick={() => {
+                const q = (document.getElementById('qa_q') as HTMLInputElement).value;
+                const o0 = (document.getElementById('qa_opt0') as HTMLInputElement).value;
+                const o1 = (document.getElementById('qa_opt1') as HTMLInputElement).value;
+                const o2 = (document.getElementById('qa_opt2') as HTMLInputElement).value;
+                const o3 = (document.getElementById('qa_opt3') as HTMLInputElement).value;
+                const ans = parseInt((document.getElementById('qa_ans') as HTMLSelectElement).value);
+                
+                if (!q || !o0 || !o1) {
+                  showToast('Question and at least Options A and B are required');
+                  return;
+                }
+                
+                try {
+                  const current = JSON.parse(formData.questionsStr);
+                  const newQ = { type: 'mcq', q, options: [o0, o1, o2, o3].filter(Boolean), ans };
+                  setFormData(p => ({ ...p, questionsStr: JSON.stringify([...current, newQ], null, 2) }));
+                  
+                  // Clear form
+                  (document.getElementById('qa_q') as HTMLInputElement).value = '';
+                  (document.getElementById('qa_opt0') as HTMLInputElement).value = '';
+                  (document.getElementById('qa_opt1') as HTMLInputElement).value = '';
+                  (document.getElementById('qa_opt2') as HTMLInputElement).value = '';
+                  (document.getElementById('qa_opt3') as HTMLInputElement).value = '';
+                  showToast('Question appended to JSON below');
+                } catch (e) {
+                  showToast('Current JSON is invalid, please fix it first');
+                }
+              }}>Append MCQ to JSON</Button>
+            </div>
+            
+            <div className="flex flex-col gap-2 border-l border-slate-200 pl-4">
+              <Label>Template Loader</Label>
+              <div className="flex gap-2">
+                <Select value={formData.template} onChange={e => setFormData(p => ({ ...p, template: e.target.value }))}>
+                  <option value="mcq">MCQ template</option>
+                  <option value="fill_blank">Fill-in-the-blanks template</option>
+                  <option value="true_false">True/False template</option>
+                  <option value="diagram">Diagram-based template</option>
+                </Select>
+                <Button variant="secondary" onClick={loadTemplate}>Replace JSON</Button>
+              </div>
+            </div>
+          </div>
+          
+          <Label>Questions (JSON format)</Label>
+          <Textarea rows={10} value={formData.questionsStr} onChange={e => setFormData(p => ({ ...p, questionsStr: e.target.value }))} className="font-mono text-sm" />
+          <p className="text-slate-500 text-[12px]">Supported types: mcq, fill_blank, true_false, diagram.</p>
         </div>
-        
-        <Label>Questions (JSON bulk format)</Label>
-        <Textarea rows={10} value={formData.questionsStr} onChange={e => setFormData(p => ({ ...p, questionsStr: e.target.value }))} className="font-mono text-sm" />
-        <p className="text-slate-500 text-[12px]">Supported types: mcq, fill_blank, true_false, diagram.</p>
         
         <div className="flex gap-2 mt-5">
           <Button onClick={saveExam}>Save</Button>

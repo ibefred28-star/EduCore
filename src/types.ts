@@ -4,6 +4,7 @@ export interface Tenant {
   id: string;
   name: string;
   createdAt: string;
+  status?: 'active' | 'suspended';
 }
 
 export interface UserBase {

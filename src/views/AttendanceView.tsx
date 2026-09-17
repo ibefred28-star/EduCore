@@ -4,10 +4,15 @@ import { useToastStore } from '../store/toast';
 import { Button, Card, Input, Label, Select } from '../components/ui';
 
 export default function AttendanceView() {
-  const { data, updateData } = useStore();
+  const { data, updateData, currentUser, currentRole } = useStore();
   const showToast = useToastStore(s => s.showToast);
+
+  const teacherClasses = currentRole === 'teacher' ? (currentUser as any)?.classes || [] : [];
+  const students = currentRole === 'teacher' 
+    ? data.students.filter(s => teacherClasses.includes(s.class))
+    : data.students;
   
-  const [studentId, setStudentId] = useState(data.students[0]?.id || '');
+  const [studentId, setStudentId] = useState(students[0]?.id || '');
   const [days, setDays] = useState(0);
   const [present, setPresent] = useState(0);
 
@@ -34,7 +39,7 @@ export default function AttendanceView() {
         
         <Label>Student</Label>
         <Select value={studentId} onChange={e => setStudentId(e.target.value)}>
-          {data.students.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+          {students.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
         </Select>
         
         <Label>Total school days</Label>
@@ -58,8 +63,8 @@ export default function AttendanceView() {
             </tr>
           </thead>
           <tbody>
-            {data.attendance.map(a => {
-              const s = data.students.find(x => x.id === a.studentId);
+            {data.attendance.filter(a => students.some(s => s.id === a.studentId)).map(a => {
+              const s = students.find(x => x.id === a.studentId);
               return (
                 <tr key={a.studentId} className="border-b border-slate-200 last:border-0 hover:bg-slate-50">
                   <td className="p-3">{s?.name || a.studentId}</td>

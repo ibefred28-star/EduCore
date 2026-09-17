@@ -2,85 +2,108 @@ import { useState, useEffect } from 'react';
 import { useStore } from '../store';
 import { useToastStore } from '../store/toast';
 import { Role } from '../types';
-import { Button, Card, Input, Label, Select, Modal } from '../components/ui';
+import { Button, Card, Input, Label, Select } from '../components/ui';
 
 export default function Login() {
   const { branding, login, schoolId, setSchoolId, loginSuperAdmin } = useStore();
   const showToast = useToastStore((state) => state.showToast);
   
-  const [role, setRole] = useState<Role>('student');
+  const [role, setRole] = useState<Role | 'superadmin'>('student');
   const [id, setId] = useState('');
   const [password, setPassword] = useState('');
   
   const [tempSchoolId, setTempSchoolId] = useState('');
-  const [showSuperAdmin, setShowSuperAdmin] = useState(false);
-  const [superAdminPass, setSuperAdminPass] = useState('');
 
-  // When schoolId becomes set, ensure UI updates (done by Zustand)
-
-  const handleSetSchool = () => {
-    if (!tempSchoolId.trim()) return showToast('Please enter a valid School ID');
-    setSchoolId(tempSchoolId.trim().toLowerCase());
-  };
-
-  const handleSuperAdminLogin = () => {
-    if (loginSuperAdmin(superAdminPass)) {
-      showToast('Welcome, Super Administrator');
-      setShowSuperAdmin(false);
-    } else {
-      showToast('Invalid super admin password');
-    }
-  };
-
+  // Handle super admin login directly from the dropdown
   const handleLogin = () => {
-    if (login(role, id, password)) {
+    if (role === 'superadmin') {
+      if (loginSuperAdmin(password)) {
+        showToast('Welcome, Super Administrator');
+      } else {
+        showToast('Invalid super admin password');
+      }
+      return;
+    }
+    
+    // Normal login
+    if (login(role as Role, id, password)) {
       showToast('Login successful');
     } else {
       showToast('Invalid credentials');
     }
   };
 
-  if (!schoolId) {
+  const handleSetSchool = () => {
+    if (!tempSchoolId.trim()) return showToast('Please enter a valid School ID');
+    setSchoolId(tempSchoolId.trim().toLowerCase());
+  };
+
+  // State 1: No school selected, and not trying to login as superadmin
+  if (!schoolId && role !== 'superadmin') {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center bg-slate-50 p-5 relative">
         <Card className="w-full max-w-sm text-center py-10">
-          <h2 className="text-2xl font-bold mt-0 mb-2">Welcome to EduCore</h2>
-          <p className="text-slate-500 mb-6">Please enter your School ID to continue.</p>
-          <Input 
-            value={tempSchoolId} 
-            onChange={e => setTempSchoolId(e.target.value)} 
-            placeholder="e.g. greenwood" 
-            onKeyDown={e => e.key === 'Enter' && handleSetSchool()}
-            className="text-center font-bold"
-          />
-          <Button className="w-full mt-4" onClick={handleSetSchool}>Continue</Button>
-        </Card>
-
-        <button 
-          onClick={() => setShowSuperAdmin(true)}
-          className="absolute bottom-6 text-sm text-slate-400 hover:text-slate-600 transition-colors"
-        >
-          Super Admin Portal
-        </button>
-
-        <Modal isOpen={showSuperAdmin} onClose={() => setShowSuperAdmin(false)}>
-          <h2 className="text-xl font-bold mt-0 mb-4">Super Admin Portal</h2>
-          <Label>Master Password</Label>
-          <Input 
-            type="password"
-            value={superAdminPass} 
-            onChange={e => setSuperAdminPass(e.target.value)}
-            onKeyDown={e => e.key === 'Enter' && handleSuperAdminLogin()}
-          />
-          <div className="flex justify-end gap-2 mt-4">
-            <Button variant="secondary" onClick={() => setShowSuperAdmin(false)}>Cancel</Button>
-            <Button onClick={handleSuperAdminLogin}>Login</Button>
+          <h2 className="text-2xl font-bold mt-0 mb-6">Welcome to EduCore</h2>
+          
+          <div className="text-left mb-6">
+            <Label>I am a...</Label>
+            <Select value={role} onChange={e => setRole(e.target.value as any)}>
+              <option value="student">Student</option>
+              <option value="teacher">Teacher</option>
+              <option value="admin">School Administrator</option>
+              <option value="superadmin">Global Super Admin</option>
+            </Select>
           </div>
-        </Modal>
+
+          <div className="text-left">
+            <Label>School ID</Label>
+            <Input 
+              value={tempSchoolId} 
+              onChange={e => setTempSchoolId(e.target.value)} 
+              placeholder="e.g. greenwood" 
+              onKeyDown={e => e.key === 'Enter' && handleSetSchool()}
+            />
+            <Button className="w-full mt-4" onClick={handleSetSchool}>Continue to School Portal</Button>
+          </div>
+        </Card>
       </div>
     );
   }
 
+  // State 2: Super Admin login (bypasses school ID)
+  if (role === 'superadmin') {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center bg-slate-900 p-5 relative">
+        <Card className="w-full max-w-sm text-center py-10 border-slate-700 shadow-2xl">
+          <h2 className="text-2xl font-bold mt-0 mb-6 text-slate-800">Super Admin Portal</h2>
+          
+          <div className="text-left mb-4">
+            <Label>Login Type</Label>
+            <Select value={role} onChange={e => setRole(e.target.value as any)}>
+              <option value="student">Student</option>
+              <option value="teacher">Teacher</option>
+              <option value="admin">School Administrator</option>
+              <option value="superadmin">Global Super Admin</option>
+            </Select>
+          </div>
+
+          <div className="text-left">
+            <Label>Master Password</Label>
+            <Input 
+              type="password"
+              value={password} 
+              onChange={e => setPassword(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && handleLogin()}
+              placeholder="admin123"
+            />
+            <Button className="w-full mt-6" onClick={handleLogin}>Access Global Portal</Button>
+          </div>
+        </Card>
+      </div>
+    );
+  }
+
+  // State 3: School selected, showing branded portal
   return (
     <div className="min-h-screen grid grid-cols-1 md:grid-cols-2">
       <section 
@@ -112,10 +135,11 @@ export default function Login() {
             <h2 className="text-2xl font-bold mt-0">Sign in</h2>
             
             <Label>Role</Label>
-            <Select value={role} onChange={e => setRole(e.target.value as Role)}>
+            <Select value={role} onChange={e => setRole(e.target.value as any)}>
               <option value="student">Student</option>
               <option value="teacher">Teacher</option>
-              <option value="admin">Administrator</option>
+              <option value="admin">School Administrator</option>
+              <option value="superadmin">Global Super Admin</option>
             </Select>
             
             <Label>Username / ID</Label>

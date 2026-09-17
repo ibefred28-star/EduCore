@@ -12,14 +12,25 @@ ChartJS.register(CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend)
 export default function ReportsView() {
   const { data, config, branding, currentUser, currentRole, updateData } = useStore();
   const showToast = useToastStore(s => s.showToast);
+
+  const teacherClasses = currentRole === 'teacher' ? (currentUser as any)?.classes || [] : [];
+  const students = currentRole === 'teacher' 
+    ? data.students.filter(s => teacherClasses.includes(s.class))
+    : data.students;
   
-  const [studentId, setStudentId] = useState(data.students[0]?.id || '');
+  const [studentId, setStudentId] = useState(students[0]?.id || '');
   const [isReportOpen, setIsReportOpen] = useState(false);
   const [reportKind, setReportKind] = useState<'academic' | 'afl'>('academic');
   
   const [reportForm, setReportForm] = useState<any>({});
   
   const reportRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (students.length > 0 && !students.find(s => s.id === studentId)) {
+      setStudentId(students[0].id);
+    }
+  }, [students, studentId]);
 
   const generateReport = (kind: 'academic' | 'afl') => {
     const s = data.students.find(x => x.id === studentId);
