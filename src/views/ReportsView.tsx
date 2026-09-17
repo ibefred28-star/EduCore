@@ -3,7 +3,7 @@ import { useStore } from '../store';
 import { useToastStore } from '../store/toast';
 import { Button, Card, Input, Label, Select, Modal, Textarea } from '../components/ui';
 import { jsPDF } from 'jspdf';
-import html2canvas from 'html2canvas';
+import html2canvas from 'html2canvas-pro';
 import { Chart as ChartJS, CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend } from 'chart.js';
 import { Bar } from 'react-chartjs-2';
 
@@ -13,7 +13,9 @@ export default function ReportsView() {
   const { data, config, branding, currentUser, currentRole, updateData } = useStore();
   const showToast = useToastStore(s => s.showToast);
 
-  const teacherClasses = currentRole === 'teacher' ? (currentUser as any)?.classes || [] : [];
+  const teacherClasses = currentRole === 'teacher' 
+    ? data.teachers.find(t => t.id === currentUser?.id)?.classes || [] 
+    : [];
   const students = currentRole === 'teacher' 
     ? data.students.filter(s => teacherClasses.includes(s.class))
     : data.students;
@@ -47,6 +49,8 @@ export default function ReportsView() {
       teacherName: s.teacherName || currentUser?.name || '',
       teacherComment: s.teacherComment || (kind === 'academic' ? 'Good performance. Keep improving.' : 'Keep working consistently.'),
       principalComment: s.principalComment || (kind === 'academic' ? 'We commend your effort and encourage continued excellence.' : 'We encourage continued progress.'),
+      teacherSignature: s.teacherSignature || '',
+      principalSignature: s.principalSignature || '',
       attDays: att.days,
       attPresent: att.present,
       attAbsent: att.absent,
@@ -56,7 +60,16 @@ export default function ReportsView() {
     setIsReportOpen(true);
   };
 
-  const saveReportDetails = () => {
+  useEffect(() => {
+    if (isReportOpen) {
+      const timer = setTimeout(() => {
+        saveReportDetails(true);
+      }, 1000);
+      return () => clearTimeout(timer);
+    }
+  }, [reportForm, isReportOpen]);
+
+  const saveReportDetails = (silent = false) => {
     updateData(draft => {
       const s = draft.students.find(x => x.id === studentId);
       if (s) {
@@ -67,12 +80,14 @@ export default function ReportsView() {
         s.teacherName = reportForm.teacherName;
         s.teacherComment = reportForm.teacherComment;
         s.principalComment = reportForm.principalComment;
+        s.teacherSignature = reportForm.teacherSignature;
+        s.principalSignature = reportForm.principalSignature;
       }
       
       const days = Math.max(0, Number(reportForm.attDays) || 0);
       const present = Math.max(0, Number(reportForm.attPresent) || 0);
       if (present > days) {
-        showToast('Days present cannot exceed school days');
+        if (!silent) showToast('Days present cannot exceed school days');
         return;
       }
       
@@ -85,7 +100,7 @@ export default function ReportsView() {
         percent: days ? Math.round((present / days) * 10000) / 100 : 0
       });
     });
-    showToast('Report details saved');
+    if (!silent) showToast('Report details saved');
   };
 
   const downloadPDF = () => {
@@ -161,7 +176,7 @@ export default function ReportsView() {
             <b>Student:</b> {s.name} &nbsp; <b>Class:</b> {s.class} &nbsp; <b>ID:</b> {s.id} 
             {reportForm.position && <>&nbsp; <b>Position:</b> {reportForm.position}</>}
           </p>
-          {s.photo && <img src={s.photo} className="w-[80px] h-[80px] object-cover -mt-10" alt="Student" />}
+          {s.photo && <img src={s.photo} className="w-[80px] h-[80px] object-cover -mt-10 border border-slate-300 shadow-sm" alt="Student" crossOrigin="anonymous" />}
         </div>
         
         <table className="w-full border-collapse mt-4 text-[11px]">
@@ -207,8 +222,22 @@ export default function ReportsView() {
         <p><b>Principal Comment:</b> {reportForm.principalComment}</p>
         
         <div className="flex justify-between mt-10 text-center">
-          <div>____________________<br/>Class Teacher<br/>{reportForm.teacherName}</div>
-          <div>____________________<br/>Principal<br/>{branding.principal}</div>
+          <div className="flex flex-col items-center">
+            {reportForm.teacherSignature ? (
+              <img src={reportForm.teacherSignature} alt="Teacher Signature" className="h-10 object-contain mb-1" crossOrigin="anonymous" />
+            ) : (
+              <div className="h-10 mb-1"></div>
+            )}
+            <div>____________________<br/>Class Teacher<br/>{reportForm.teacherName}</div>
+          </div>
+          <div className="flex flex-col items-center">
+            {reportForm.principalSignature ? (
+              <img src={reportForm.principalSignature} alt="Principal Signature" className="h-10 object-contain mb-1" crossOrigin="anonymous" />
+            ) : (
+              <div className="h-10 mb-1"></div>
+            )}
+            <div>____________________<br/>Principal<br/>{branding.principal}</div>
+          </div>
         </div>
       </div>
     );
@@ -247,7 +276,10 @@ export default function ReportsView() {
           <p className="m-0"><b>{reportForm.term}</b> · {reportForm.session}</p>
         </div>
         
-        <p><b>Student:</b> {s.name} &nbsp; <b>Class:</b> {s.class} &nbsp; <b>ID:</b> {s.id}</p>
+        <div className="flex justify-between items-start mb-4">
+          <p className="m-0"><b>Student:</b> {s.name} &nbsp; <b>Class:</b> {s.class} &nbsp; <b>ID:</b> {s.id}</p>
+          {s.photo && <img src={s.photo} className="w-[80px] h-[80px] object-cover -mt-10 border border-slate-300 shadow-sm" alt="Student" crossOrigin="anonymous" />}
+        </div>
         
         <table className="w-full border-collapse mt-4 text-[11px]">
           <thead>
@@ -297,8 +329,22 @@ export default function ReportsView() {
         <p><b>Principal Comment:</b> {reportForm.principalComment}</p>
         
         <div className="flex justify-between mt-10 text-center">
-          <div>____________________<br/>Class Teacher<br/>{reportForm.teacherName}</div>
-          <div>____________________<br/>Principal<br/>{branding.principal}</div>
+          <div className="flex flex-col items-center">
+            {reportForm.teacherSignature ? (
+              <img src={reportForm.teacherSignature} alt="Teacher Signature" className="h-10 object-contain mb-1" crossOrigin="anonymous" />
+            ) : (
+              <div className="h-10 mb-1"></div>
+            )}
+            <div>____________________<br/>Class Teacher<br/>{reportForm.teacherName}</div>
+          </div>
+          <div className="flex flex-col items-center">
+            {reportForm.principalSignature ? (
+              <img src={reportForm.principalSignature} alt="Principal Signature" className="h-10 object-contain mb-1" crossOrigin="anonymous" />
+            ) : (
+              <div className="h-10 mb-1"></div>
+            )}
+            <div>____________________<br/>Principal<br/>{branding.principal}</div>
+          </div>
         </div>
       </div>
     );
@@ -349,6 +395,31 @@ export default function ReportsView() {
             
             <Label>Principal Comment</Label>
             <Textarea rows={3} value={reportForm.principalComment} onChange={e => setReportForm((p: any) => ({ ...p, principalComment: e.target.value }))} />
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3">
+              <div>
+                <Label>Teacher Signature (Image Upload)</Label>
+                <Input type="file" accept="image/*" onChange={e => {
+                  const file = e.target.files?.[0];
+                  if (file) {
+                    const r = new FileReader();
+                    r.onload = () => setReportForm((p: any) => ({ ...p, teacherSignature: r.result }));
+                    r.readAsDataURL(file);
+                  }
+                }} />
+              </div>
+              <div>
+                <Label>Principal Signature (Image Upload)</Label>
+                <Input type="file" accept="image/*" onChange={e => {
+                  const file = e.target.files?.[0];
+                  if (file) {
+                    const r = new FileReader();
+                    r.onload = () => setReportForm((p: any) => ({ ...p, principalSignature: r.result }));
+                    r.readAsDataURL(file);
+                  }
+                }} />
+              </div>
+            </div>
           </Card>
           
           <div className="overflow-auto bg-slate-200 p-4 rounded-[14px]">
@@ -357,7 +428,7 @@ export default function ReportsView() {
           
           <div className="flex justify-center gap-2 mt-4">
             <Button variant="success" onClick={saveReportDetails}>Save Report Details</Button>
-            <Button onClick={downloadPDF}>Download PDF</Button>
+            <Button onClick={() => { saveReportDetails(); downloadPDF(); }}>Download PDF</Button>
             <Button variant="secondary" onClick={() => setIsReportOpen(false)}>Close</Button>
           </div>
         </div>

@@ -7,7 +7,9 @@ export default function AttendanceView() {
   const { data, updateData, currentUser, currentRole } = useStore();
   const showToast = useToastStore(s => s.showToast);
 
-  const teacherClasses = currentRole === 'teacher' ? (currentUser as any)?.classes || [] : [];
+  const teacherClasses = currentRole === 'teacher' 
+    ? data.teachers.find(t => t.id === currentUser?.id)?.classes || [] 
+    : [];
   const students = currentRole === 'teacher' 
     ? data.students.filter(s => teacherClasses.includes(s.class))
     : data.students;

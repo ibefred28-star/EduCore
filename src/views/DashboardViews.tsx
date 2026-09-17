@@ -17,7 +17,9 @@ function getComponentMax(type: string, config: any) {
 export default function DashboardHome() {
   const { data, currentRole, currentUser, config } = useStore();
   
-  const teacherClasses = currentRole === 'teacher' ? (currentUser as any)?.classes || [] : [];
+  const teacherClasses = currentRole === 'teacher' 
+    ? data.teachers.find(t => t.id === currentUser?.id)?.classes || [] 
+    : [];
   
   // Filter students: if teacher, only students in their classes
   const students = currentRole === 'teacher' 
@@ -87,7 +89,7 @@ export default function DashboardHome() {
       </div>
 
       {/* Chart Widget (spans full or 3 cols, and taller) */}
-      <div className="col-span-1 md:col-span-3 lg:col-span-3 row-span-2 bg-white rounded-[24px] p-6 shadow-sm border border-slate-100">
+      <div className={`col-span-1 md:col-span-3 lg:col-span-3 row-span-2 bg-white rounded-[24px] p-6 shadow-sm border border-slate-100 ${currentRole === 'student' ? 'lg:col-span-2' : ''}`}>
         <div className="flex justify-between items-center mb-4">
           <h3 className="text-lg font-bold text-slate-800 m-0">Performance Overview</h3>
         </div>
@@ -106,6 +108,45 @@ export default function DashboardHome() {
           />
         </div>
       </div>
+
+      {currentRole === 'student' && (
+        <div className="col-span-1 md:col-span-3 lg:col-span-2 row-span-2 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-[24px] p-6 shadow-sm text-white overflow-hidden relative">
+          <h3 className="text-lg font-bold m-0 mb-4 flex items-center gap-2">
+            <span>🏆</span> XP Leaderboard
+          </h3>
+          <div className="flex flex-col gap-3 relative z-10">
+            {data.students
+              .map(s => {
+                const xp = data.results
+                  .filter(r => r.studentId === s.id)
+                  .reduce((sum, r) => sum + (r.scaled || r.raw || 0), 0);
+                return { ...s, xp };
+              })
+              .sort((a, b) => b.xp - a.xp)
+              .slice(0, 5)
+              .map((s, idx) => (
+                <div key={s.id} className={`flex items-center justify-between p-3 rounded-xl ${s.id === currentUser?.id ? 'bg-white/20 font-bold border border-white/30' : 'bg-black/10'}`}>
+                  <div className="flex items-center gap-3">
+                    <span className="text-lg font-black w-6 text-center opacity-80">#{idx + 1}</span>
+                    {s.photo ? (
+                      <img src={s.photo} alt={s.name} className="w-8 h-8 rounded-full object-cover bg-white/20" />
+                    ) : (
+                      <div className="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center text-sm font-bold">
+                        {s.name.charAt(0)}
+                      </div>
+                    )}
+                    <span className="truncate max-w-[120px]">{s.name.split(' ')[0]}</span>
+                  </div>
+                  <div className="flex items-center gap-1 font-mono">
+                    <span className="text-amber-300">⚡</span>
+                    {Math.round(s.xp)} XP
+                  </div>
+                </div>
+              ))}
+          </div>
+          <div className="absolute -right-10 -bottom-10 opacity-10 text-9xl">👑</div>
+        </div>
+      )}
 
       {/* Additional Stats */}
       <div className="bg-emerald-500 rounded-[24px] p-6 shadow-sm flex flex-col justify-center text-white">

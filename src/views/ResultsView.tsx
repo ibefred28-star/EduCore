@@ -32,7 +32,9 @@ export default function ResultsView({ studentOnly = false }: { studentOnly?: boo
   
   const [reviewResult, setReviewResult] = useState<any>(null);
 
-  const teacherClasses = currentRole === 'teacher' ? (currentUser as any)?.classes || [] : [];
+  const teacherClasses = currentRole === 'teacher' 
+    ? data.teachers.find(t => t.id === currentUser?.id)?.classes || [] 
+    : [];
 
   let rs = data.results;
   if (studentOnly || currentRole === 'student') {

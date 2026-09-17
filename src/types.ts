@@ -23,6 +23,8 @@ export interface Student extends UserBase {
   teacherName?: string;
   teacherComment?: string;
   principalComment?: string;
+  teacherSignature?: string;
+  principalSignature?: string;
 }
 
 export interface Teacher extends UserBase {

@@ -61,6 +61,7 @@ export default function AdminStudents() {
         <table className="w-full border-collapse">
           <thead>
             <tr className="bg-slate-50 border-b border-slate-200 text-left">
+              <th className="p-3 font-semibold w-12">Photo</th>
               <th className="p-3 font-semibold">ID</th>
               <th className="p-3 font-semibold">Name</th>
               <th className="p-3 font-semibold">Class</th>
@@ -70,6 +71,9 @@ export default function AdminStudents() {
           <tbody>
             {data.students.map(s => (
               <tr key={s.id} className="border-b border-slate-200 last:border-0 hover:bg-slate-50">
+                <td className="p-3">
+                  {s.photo ? <img src={s.photo} alt={s.name} className="w-8 h-8 rounded-full object-cover" /> : <div className="w-8 h-8 rounded-full bg-slate-200 flex items-center justify-center text-xs">{s.name.charAt(0)}</div>}
+                </td>
                 <td className="p-3">{s.id}</td>
                 <td className="p-3">{s.name}</td>
                 <td className="p-3">{s.class}</td>

@@ -108,7 +108,8 @@ export default function Dashboard() {
 
 function MyClassesView() {
   const { data, currentUser } = useStore();
-  const classes = (currentUser as any).classes || [];
+  const teacher = data.teachers.find(t => t.id === currentUser?.id);
+  const classes = teacher?.classes || [];
   
   return (
     <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-[15px]">
@@ -118,6 +119,7 @@ function MyClassesView() {
           <p className="text-slate-500 mb-1">{data.students.filter(s => s.class === c).length} students</p>
         </div>
       ))}
+      {!classes.length && <p className="col-span-full text-slate-500">No classes assigned yet.</p>}
     </div>
   );
 }

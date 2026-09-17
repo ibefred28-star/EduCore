@@ -51,11 +51,13 @@ export const useStore = create<StoreState>((set, get) => {
   const DATA_KEY = initialSchoolId ? `educore_data_${initialSchoolId}` : 'educore_data_v2';
   const BRAND_KEY = initialSchoolId ? `educore_brand_${initialSchoolId}` : 'educore_brand_v2';
   const CONFIG_KEY = initialSchoolId ? `educore_config_${initialSchoolId}` : 'educore_config_v2';
+  const USER_KEY = initialSchoolId ? `educore_current_user_${initialSchoolId}` : 'educore_current_user';
+  const ROLE_KEY = initialSchoolId ? `educore_current_role_${initialSchoolId}` : 'educore_current_role';
 
   return {
     schoolId: initialSchoolId,
-    currentUser: null,
-    currentRole: null,
+    currentUser: safeParse<User | null>(USER_KEY, null),
+    currentRole: safeParse<Role | null>(ROLE_KEY, null),
     activeExamId: null,
     data: safeParse<AppData>(DATA_KEY, DEFAULT_DATA),
     branding: safeParse<Branding>(BRAND_KEY, DEFAULT_BRANDING),
@@ -80,6 +82,8 @@ export const useStore = create<StoreState>((set, get) => {
           currentUser: null,
           currentRole: null
         });
+        localStorage.removeItem(`educore_current_user_${id}`);
+        localStorage.removeItem(`educore_current_role_${id}`);
         get().initSync();
       } else {
         localStorage.removeItem('educore_school_id');
@@ -116,6 +120,14 @@ export const useStore = create<StoreState>((set, get) => {
       }
 
       if (user) {
+        const state = get();
+        if (state.schoolId) {
+          localStorage.setItem(`educore_current_user_${state.schoolId}`, JSON.stringify(user));
+          localStorage.setItem(`educore_current_role_${state.schoolId}`, JSON.stringify(actualRole));
+        } else {
+          localStorage.setItem('educore_current_user', JSON.stringify(user));
+          localStorage.setItem('educore_current_role', JSON.stringify(actualRole));
+        }
         set({ currentUser: user, currentRole: actualRole });
         get().initSync();
         return true;
@@ -125,9 +137,12 @@ export const useStore = create<StoreState>((set, get) => {
 
     loginSuperAdmin: (pass) => {
       if (pass === SUPERADMIN_PASS) {
+        const user = { id: 'superadmin', name: 'Super Administrator' } as User;
+        localStorage.setItem('educore_current_user', JSON.stringify(user));
+        localStorage.setItem('educore_current_role', JSON.stringify('superadmin'));
         set({ 
           currentRole: 'superadmin', 
-          currentUser: { id: 'superadmin', name: 'Super Administrator' } as User,
+          currentUser: user,
           schoolId: null 
         });
         get().initSync(); // This will fetch the global tenants since role is superadmin
@@ -137,6 +152,14 @@ export const useStore = create<StoreState>((set, get) => {
     },
 
     logout: () => {
+      const state = get();
+      if (state.schoolId) {
+        localStorage.removeItem(`educore_current_user_${state.schoolId}`);
+        localStorage.removeItem(`educore_current_role_${state.schoolId}`);
+      } else {
+        localStorage.removeItem('educore_current_user');
+        localStorage.removeItem('educore_current_role');
+      }
       set({ currentUser: null, currentRole: null });
       const unsub = get().unsubscribeSnapshot;
       if (unsub) unsub();
