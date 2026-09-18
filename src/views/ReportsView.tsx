@@ -124,7 +124,8 @@ export default function ReportsView() {
           if (y < h) p.addPage();
         }
       }
-      p.save('EduCore_Report_Card.pdf');
+      const safeName = (s?.name || 'Student').replace(/[^a-zA-Z0-9_-]/g, '_');
+      p.save(`Report_Card_${safeName}.pdf`);
     });
   };
 

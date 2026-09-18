@@ -85,7 +85,7 @@ interface StoreState {
   
   // Actions
   setSchoolId: (id: string | null) => void;
-  login: (role: Role, id: string, pass: string) => boolean;
+  login: (role: Role, id: string, pass: string) => { success: boolean; error?: string };
   loginSuperAdmin: (pass: string) => boolean;
   logout: () => void;
   updateData: (updater: (draft: AppData) => AppData | void) => void;
@@ -156,56 +156,88 @@ export const useStore = create<StoreState>((set, get) => {
     },
 
     login: (role, id, pass) => {
+      const trimmedId = id ? id.trim() : '';
+      const trimmedPass = pass ? pass.trim() : '';
+      if (!trimmedId || !trimmedPass) {
+        return { success: false, error: 'Please enter both Username/ID and password' };
+      }
+
+      const cleanId = trimmedId.toLowerCase();
       const data = get().data;
-      const cleanId = id.trim().toLowerCase();
       
       const students = data.students || DEFAULT_DATA.students;
       const teachers = data.teachers || DEFAULT_DATA.teachers;
       const admins = data.admins || DEFAULT_DATA.admins;
 
-      const checkRole = (r: Role) => {
-        if (r === 'admin') return admins.find(u => (u.id || '').toLowerCase() === cleanId && u.password === pass);
-        if (r === 'teacher') return teachers.find(u => (u.id || '').toLowerCase() === cleanId && u.password === pass);
-        if (r === 'student') return students.find(u => (u.id || '').toLowerCase() === cleanId && u.password === pass);
-        return undefined;
-      };
-
-      let user = checkRole(role);
-      let actualRole = role;
-
-      // Auto-correct role if the user forgot to change the dropdown
-      if (!user) {
-        if (checkRole('admin')) { user = checkRole('admin'); actualRole = 'admin'; }
-        else if (checkRole('teacher')) { user = checkRole('teacher'); actualRole = 'teacher'; }
-        else if (checkRole('student')) { user = checkRole('student'); actualRole = 'student'; }
+      // Strict role verification: only search the user collection for the SELECTED role
+      let user: any = undefined;
+      if (role === 'admin') {
+        user = admins.find(u => (u.id || '').trim().toLowerCase() === cleanId);
+      } else if (role === 'teacher') {
+        user = teachers.find(u => (u.id || '').trim().toLowerCase() === cleanId);
+      } else if (role === 'student') {
+        user = students.find(u => (u.id || '').trim().toLowerCase() === cleanId);
       }
 
-      if (user) {
-        const state = get();
-        if (actualRole === 'teacher') {
-          const freshTeacher = data.teachers?.find(t => (t.id || '').trim().toLowerCase() === cleanId);
-          if (freshTeacher) {
-            user = { ...freshTeacher };
-            if (Array.isArray((user as any).classes) && (user as any).classes.some((c: string) => isStudentInTeacherClasses('Primary 5', [c]))) {
-              (user as any).classes = (user as any).classes.filter((c: string) => {
-                const cl = c.toLowerCase().replace(/\s+/g, '');
-                return cl !== 'jss2' && cl !== 'jss02';
-              });
-            }
+      // If user does not exist in the selected role, check if they exist under a DIFFERENT role to prevent role confusion
+      if (!user) {
+        const inTeacher = teachers.some(u => (u.id || '').trim().toLowerCase() === cleanId);
+        const inStudent = students.some(u => (u.id || '').trim().toLowerCase() === cleanId);
+        const inAdmin = admins.some(u => (u.id || '').trim().toLowerCase() === cleanId);
+
+        if (inTeacher && role !== 'teacher') {
+          return {
+            success: false,
+            error: `ID "${trimmedId}" belongs to a Teacher. Please select "Teacher" in the Role dropdown to sign in.`
+          };
+        }
+        if (inStudent && role !== 'student') {
+          return {
+            success: false,
+            error: `ID "${trimmedId}" belongs to a Student. Please select "Student" in the Role dropdown to sign in.`
+          };
+        }
+        if (inAdmin && role !== 'admin') {
+          return {
+            success: false,
+            error: `ID "${trimmedId}" belongs to a School Administrator. Please select "School Administrator" in the Role dropdown to sign in.`
+          };
+        }
+
+        const roleLabel = role === 'admin' ? 'School Administrator' : role === 'teacher' ? 'Teacher' : 'Student';
+        return { success: false, error: `No ${roleLabel} account found with ID "${trimmedId}".` };
+      }
+
+      // Validate password for this user
+      if (user.password !== pass) {
+        return { success: false, error: 'Incorrect password. Please try again.' };
+      }
+
+      // Successful login under selected role
+      const state = get();
+      if (role === 'teacher') {
+        const freshTeacher = data.teachers?.find(t => (t.id || '').trim().toLowerCase() === cleanId);
+        if (freshTeacher) {
+          user = { ...freshTeacher };
+          if (Array.isArray((user as any).classes) && (user as any).classes.some((c: string) => isStudentInTeacherClasses('Primary 5', [c]))) {
+            (user as any).classes = (user as any).classes.filter((c: string) => {
+              const cl = c.toLowerCase().replace(/\s+/g, '');
+              return cl !== 'jss2' && cl !== 'jss02';
+            });
           }
         }
-        if (state.schoolId) {
-          localStorage.setItem(`educore_current_user_${state.schoolId}`, JSON.stringify(user));
-          localStorage.setItem(`educore_current_role_${state.schoolId}`, JSON.stringify(actualRole));
-        } else {
-          localStorage.setItem('educore_current_user', JSON.stringify(user));
-          localStorage.setItem('educore_current_role', JSON.stringify(actualRole));
-        }
-        set({ currentUser: user, currentRole: actualRole });
-        get().initSync();
-        return true;
       }
-      return false;
+
+      if (state.schoolId) {
+        localStorage.setItem(`educore_current_user_${state.schoolId}`, JSON.stringify(user));
+        localStorage.setItem(`educore_current_role_${state.schoolId}`, JSON.stringify(role));
+      } else {
+        localStorage.setItem('educore_current_user', JSON.stringify(user));
+        localStorage.setItem('educore_current_role', JSON.stringify(role));
+      }
+      set({ currentUser: user, currentRole: role });
+      get().initSync();
+      return { success: true };
     },
 
     loginSuperAdmin: (pass) => {

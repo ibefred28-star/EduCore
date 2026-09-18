@@ -134,6 +134,13 @@ function MyClassesView() {
       const t = draft.teachers.find(x => (x.id || '').trim().toLowerCase() === (currentUser?.id || '').trim().toLowerCase());
       if (t) {
         t.classes = (t.classes || []).filter(c => c !== className);
+        useStore.setState({ currentUser: { ...t } });
+        const sid = useStore.getState().schoolId;
+        if (sid) {
+          localStorage.setItem(`educore_current_user_${sid}`, JSON.stringify(t));
+        } else {
+          localStorage.setItem('educore_current_user', JSON.stringify(t));
+        }
       }
     });
     showToast(`Removed ${className} from your classes`);
@@ -147,6 +154,13 @@ function MyClassesView() {
         if (!t.classes) t.classes = [];
         if (!t.classes.includes(className)) {
           t.classes.push(className);
+          useStore.setState({ currentUser: { ...t } });
+          const sid = useStore.getState().schoolId;
+          if (sid) {
+            localStorage.setItem(`educore_current_user_${sid}`, JSON.stringify(t));
+          } else {
+            localStorage.setItem('educore_current_user', JSON.stringify(t));
+          }
         }
       }
     });

@@ -27,6 +27,18 @@ export default function AttendanceView() {
     }
   }, [students, studentId]);
 
+  useEffect(() => {
+    if (!studentId) return;
+    const existing = data.attendance.find(a => a.studentId === studentId);
+    if (existing) {
+      setDays(existing.days);
+      setPresent(existing.present);
+    } else {
+      setDays(60);
+      setPresent(60);
+    }
+  }, [studentId]);
+
   const saveAttendance = () => {
     if (days < 0 || present < 0 || present > days) return showToast('Present days cannot exceed school days');
     

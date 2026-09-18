@@ -29,23 +29,33 @@ export default function AdminTeachers() {
   };
 
   const saveTeacher = () => {
-    if (!formData.id || !formData.name) return showToast('ID and Name required');
+    const trimmedId = formData.id.trim();
+    const trimmedName = formData.name.trim();
+    if (!trimmedId || !trimmedName) return showToast('ID and Name are required');
     
     let finalClasses = [...formData.classes];
-    if (formData.otherClass && !finalClasses.includes(formData.otherClass)) {
-      finalClasses.push(formData.otherClass);
+    if (formData.otherClass && !finalClasses.includes(formData.otherClass.trim())) {
+      finalClasses.push(formData.otherClass.trim());
+    }
+
+    if (!editingId) {
+      if (data.teachers.some(t => t.id.toLowerCase() === trimmedId.toLowerCase())) {
+        return showToast(`Teacher ID "${trimmedId}" already exists`);
+      }
+      if (data.students.some(s => s.id.toLowerCase() === trimmedId.toLowerCase())) {
+        return showToast(`ID "${trimmedId}" is already used by a Student`);
+      }
+      if (data.admins.some(a => a.id.toLowerCase() === trimmedId.toLowerCase())) {
+        return showToast(`ID "${trimmedId}" is already used by an Administrator`);
+      }
     }
 
     updateData(draft => {
       if (editingId) {
         const i = draft.teachers.findIndex(x => x.id === editingId);
-        if (i >= 0) draft.teachers[i] = { ...draft.teachers[i], id: formData.id, name: formData.name, password: formData.password, subjects: formData.subjects, classes: finalClasses };
+        if (i >= 0) draft.teachers[i] = { ...draft.teachers[i], id: trimmedId, name: trimmedName, password: formData.password || 'pass', subjects: formData.subjects, classes: finalClasses };
       } else {
-        if (draft.teachers.some(t => t.id === formData.id)) {
-          showToast('ID exists');
-          return;
-        }
-        draft.teachers.push({ id: formData.id, name: formData.name, password: formData.password, subjects: formData.subjects, classes: finalClasses });
+        draft.teachers.push({ id: trimmedId, name: trimmedName, password: formData.password || 'pass', subjects: formData.subjects, classes: finalClasses });
       }
     });
     showToast('Teacher saved');

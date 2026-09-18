@@ -26,10 +26,11 @@ export default function Login() {
     }
     
     // Normal login
-    if (login(role as Role, id, password)) {
+    const res = login(role as Role, id, password);
+    if (res.success) {
       showToast('Login successful');
     } else {
-      showToast('Invalid credentials');
+      showToast(res.error || 'Invalid credentials');
     }
   };
 
@@ -146,7 +147,7 @@ export default function Login() {
             <Input 
               value={id} 
               onChange={e => setId(e.target.value)} 
-              placeholder="Enter your ID" 
+              placeholder={role === 'student' ? 'e.g. STU001' : role === 'teacher' ? 'e.g. teacher1' : 'e.g. admin'} 
             />
             
             <Label>Password</Label>
@@ -161,6 +162,33 @@ export default function Login() {
             <Button className="w-full mt-5" onClick={handleLogin}>
               Login
             </Button>
+
+            <div className="mt-5 pt-4 border-t border-slate-100 text-xs text-slate-500">
+              <span className="font-semibold block text-slate-600 mb-2">Quick Demo Accounts:</span>
+              <div className="flex flex-wrap gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => { setRole('student'); setId('STU001'); setPassword('pass'); }}
+                  className="px-2.5 py-1 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium transition-colors"
+                >
+                  Student (Aisha Bello: STU001)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setRole('teacher'); setId('teacher1'); setPassword('pass'); }}
+                  className="px-2.5 py-1 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium transition-colors"
+                >
+                  Teacher (Mr. Okafor: teacher1)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setRole('admin'); setId('admin'); setPassword('admin'); }}
+                  className="px-2.5 py-1 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium transition-colors"
+                >
+                  Admin (admin)
+                </button>
+              </div>
+            </div>
           </Card>
         </div>
       </section>

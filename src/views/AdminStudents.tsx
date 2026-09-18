@@ -26,22 +26,34 @@ export default function AdminStudents() {
   };
 
   const saveStudent = () => {
-    if (!formData.id || !formData.name) return showToast('ID and Name required');
+    const trimmedId = formData.id.trim();
+    const trimmedName = formData.name.trim();
+    if (!trimmedId || !trimmedName) return showToast('ID and Name are required');
     
     const cleanStudent = {
       ...formData,
+      id: trimmedId,
+      name: trimmedName,
       class: (formData.class || '').trim() || 'Primary 5'
     };
+
+    if (!editingId) {
+      if (data.students.some(s => s.id.toLowerCase() === cleanStudent.id.toLowerCase())) {
+        return showToast(`Student ID "${cleanStudent.id}" already exists`);
+      }
+      if (data.teachers.some(t => t.id.toLowerCase() === cleanStudent.id.toLowerCase())) {
+        return showToast(`ID "${cleanStudent.id}" is already used by a Teacher`);
+      }
+      if (data.admins.some(a => a.id.toLowerCase() === cleanStudent.id.toLowerCase())) {
+        return showToast(`ID "${cleanStudent.id}" is already used by an Administrator`);
+      }
+    }
 
     updateData(draft => {
       if (editingId) {
         const i = draft.students.findIndex(x => x.id === editingId);
         if (i >= 0) draft.students[i] = { ...draft.students[i], ...cleanStudent };
       } else {
-        if (draft.students.some(s => s.id === cleanStudent.id)) {
-          showToast('ID exists');
-          return;
-        }
         draft.students.push(cleanStudent);
       }
     });
