@@ -6,6 +6,7 @@ import { jsPDF } from 'jspdf';
 import html2canvas from 'html2canvas-pro';
 import { Chart as ChartJS, CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend } from 'chart.js';
 import { Bar } from 'react-chartjs-2';
+import { isStudentInTeacherClasses } from '../lib/classUtils';
 
 ChartJS.register(CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend);
 
@@ -13,11 +14,13 @@ export default function ReportsView() {
   const { data, config, branding, currentUser, currentRole, updateData } = useStore();
   const showToast = useToastStore(s => s.showToast);
 
-  const teacherClasses = currentRole === 'teacher' 
-    ? data.teachers.find(t => t.id === currentUser?.id)?.classes || [] 
-    : [];
+  const teacher = currentRole === 'teacher' 
+    ? data.teachers.find(t => (t.id || '').trim().toLowerCase() === (currentUser?.id || '').trim().toLowerCase()) || (currentUser as any)
+    : null;
+  const teacherClasses = teacher?.classes || [];
+
   const students = currentRole === 'teacher' 
-    ? data.students.filter(s => teacherClasses.includes(s.class))
+    ? data.students.filter(s => isStudentInTeacherClasses(s.class, teacherClasses))
     : data.students;
   
   const [studentId, setStudentId] = useState(students[0]?.id || '');
@@ -105,17 +108,18 @@ export default function ReportsView() {
 
   const downloadPDF = () => {
     if (!reportRef.current) return;
-    html2canvas(reportRef.current, { scale: 2, useCORS: true }).then(c => {
-      const p = new jsPDF('p', 'mm', 'a4');
-      const img = c.toDataURL('image/png');
+    html2canvas(reportRef.current, { scale: 1.6, useCORS: true, logging: false }).then(c => {
+      const p = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4', compress: true });
+      // Use JPEG with 0.82 quality to dramatically reduce PDF file size below 1 MB while retaining crisp resolution
+      const img = c.toDataURL('image/jpeg', 0.82);
       const w = 210;
       const h = c.height * 210 / c.width;
       if (h <= 297) {
-        p.addImage(img, 'PNG', 0, 0, 210, h);
+        p.addImage(img, 'JPEG', 0, 0, 210, h, undefined, 'FAST');
       } else {
         let y = 0;
         while (y < h) {
-          p.addImage(img, 'PNG', 0, -y, 210, h);
+          p.addImage(img, 'JPEG', 0, -y, 210, h, undefined, 'FAST');
           y += 297;
           if (y < h) p.addPage();
         }
@@ -357,8 +361,13 @@ export default function ReportsView() {
         <p className="text-slate-500 mb-4">Generate the academic report or a dedicated AFL progress report.</p>
         
         <Select value={studentId} onChange={e => setStudentId(e.target.value)}>
-          {data.students.map(s => <option key={s.id} value={s.id}>{s.name} ({s.class})</option>)}
+          {students.map(s => <option key={s.id} value={s.id}>{s.name} ({s.class})</option>)}
         </Select>
+        {students.length === 0 && (
+          <p className="text-sm text-amber-600 mt-2">
+            No students found registered for your assigned class ({teacherClasses.join(', ') || 'No classes assigned'}).
+          </p>
+        )}
         
         <div className="flex gap-2 mt-4">
           <Button onClick={() => generateReport('academic')}>Academic Report</Button>

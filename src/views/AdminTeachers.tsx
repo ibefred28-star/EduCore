@@ -124,18 +124,78 @@ export default function AdminTeachers() {
           {data.subjects.map(s => <option key={s} value={s}>{s}</option>)}
         </Select>
         
-        <Label>Classes (Hold Ctrl/Cmd to multi-select)</Label>
-        <Select 
-          multiple 
-          size={8} 
-          value={formData.classes} 
-          onChange={e => setFormData(p => ({ ...p, classes: Array.from(e.target.selectedOptions, (o: HTMLOptionElement) => o.value) }))}
-        >
-          {CLASS_OPTIONS.map(c => <option key={c} value={c}>{c}</option>)}
-        </Select>
+        <Label>Classes Assigned to Teacher</Label>
+        <div className="mb-3">
+          <div className="flex flex-wrap gap-1.5 p-2 bg-slate-50 border border-slate-200 rounded-lg min-h-[42px] items-center mb-2">
+            {formData.classes.map(c => (
+              <span key={c} className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-indigo-600 text-white shadow-sm">
+                {c}
+                <button
+                  type="button"
+                  onClick={() => setFormData(p => ({ ...p, classes: p.classes.filter(x => x !== c) }))}
+                  className="hover:bg-indigo-700 rounded-full w-4 h-4 inline-flex items-center justify-center text-xs font-bold leading-none cursor-pointer"
+                  title={`Remove ${c}`}
+                >
+                  ×
+                </button>
+              </span>
+            ))}
+            {formData.classes.length === 0 && (
+              <span className="text-xs text-slate-400 italic">No classes selected. Click below to add classes.</span>
+            )}
+          </div>
+
+          <p className="text-xs text-slate-500 mb-1.5 font-medium">Click any class to assign / unassign:</p>
+          <div className="flex flex-wrap gap-1.5 max-h-36 overflow-y-auto p-1.5 border border-slate-100 rounded-lg bg-white">
+            {CLASS_OPTIONS.map(c => {
+              const isSelected = formData.classes.includes(c);
+              return (
+                <button
+                  type="button"
+                  key={c}
+                  onClick={() => {
+                    setFormData(p => ({
+                      ...p,
+                      classes: isSelected 
+                        ? p.classes.filter(x => x !== c)
+                        : [...p.classes, c]
+                    }));
+                  }}
+                  className={`px-2.5 py-1 rounded-full text-xs font-medium transition-all cursor-pointer border ${
+                    isSelected
+                      ? 'bg-indigo-50 border-indigo-300 text-indigo-700 font-semibold'
+                      : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'
+                  }`}
+                >
+                  {isSelected ? `✓ ${c}` : `+ ${c}`}
+                </button>
+              );
+            })}
+          </div>
+        </div>
         
-        <Label>Other class (optional)</Label>
-        <Input value={formData.otherClass} placeholder="Enter another class" onChange={e => setFormData(p => ({ ...p, otherClass: e.target.value }))} />
+        <Label>Other / custom class (optional)</Label>
+        <div className="flex gap-2">
+          <Input 
+            value={formData.otherClass} 
+            placeholder="e.g. Primary 5A or Reception" 
+            onChange={e => setFormData(p => ({ ...p, otherClass: e.target.value }))} 
+          />
+          {formData.otherClass && (
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => {
+                const val = formData.otherClass.trim();
+                if (val && !formData.classes.includes(val)) {
+                  setFormData(p => ({ ...p, classes: [...p.classes, val], otherClass: '' }));
+                }
+              }}
+            >
+              Add
+            </Button>
+          )}
+        </div>
         
         <div className="flex gap-2 mt-5">
           <Button onClick={saveTeacher}>Save</Button>

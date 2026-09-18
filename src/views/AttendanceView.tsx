@@ -1,22 +1,31 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useStore } from '../store';
 import { useToastStore } from '../store/toast';
 import { Button, Card, Input, Label, Select } from '../components/ui';
+import { isStudentInTeacherClasses } from '../lib/classUtils';
 
 export default function AttendanceView() {
   const { data, updateData, currentUser, currentRole } = useStore();
   const showToast = useToastStore(s => s.showToast);
 
-  const teacherClasses = currentRole === 'teacher' 
-    ? data.teachers.find(t => t.id === currentUser?.id)?.classes || [] 
-    : [];
+  const teacher = currentRole === 'teacher' 
+    ? data.teachers.find(t => (t.id || '').trim().toLowerCase() === (currentUser?.id || '').trim().toLowerCase()) || (currentUser as any)
+    : null;
+  const teacherClasses = teacher?.classes || [];
+
   const students = currentRole === 'teacher' 
-    ? data.students.filter(s => teacherClasses.includes(s.class))
+    ? data.students.filter(s => isStudentInTeacherClasses(s.class, teacherClasses))
     : data.students;
   
   const [studentId, setStudentId] = useState(students[0]?.id || '');
   const [days, setDays] = useState(0);
   const [present, setPresent] = useState(0);
+
+  useEffect(() => {
+    if (students.length > 0 && !students.find(s => s.id === studentId)) {
+      setStudentId(students[0].id);
+    }
+  }, [students, studentId]);
 
   const saveAttendance = () => {
     if (days < 0 || present < 0 || present > days) return showToast('Present days cannot exceed school days');
@@ -41,8 +50,13 @@ export default function AttendanceView() {
         
         <Label>Student</Label>
         <Select value={studentId} onChange={e => setStudentId(e.target.value)}>
-          {students.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+          {students.map(s => <option key={s.id} value={s.id}>{s.name} ({s.class})</option>)}
         </Select>
+        {students.length === 0 && (
+          <p className="text-sm text-amber-600 mt-2">
+            No students found registered for your assigned class ({teacherClasses.join(', ') || 'No classes assigned'}).
+          </p>
+        )}
         
         <Label>Total school days</Label>
         <Input type="number" min="0" value={days} onChange={e => setDays(Number(e.target.value))} />

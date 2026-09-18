@@ -4,6 +4,7 @@ import { Bar } from 'react-chartjs-2';
 import { Chart as ChartJS, CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend } from 'chart.js';
 import { useState } from 'react';
 import { useToastStore } from '../store/toast';
+import { isStudentInTeacherClasses } from '../lib/classUtils';
 
 ChartJS.register(CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend);
 
@@ -17,13 +18,14 @@ function getComponentMax(type: string, config: any) {
 export default function DashboardHome() {
   const { data, currentRole, currentUser, config } = useStore();
   
-  const teacherClasses = currentRole === 'teacher' 
-    ? data.teachers.find(t => t.id === currentUser?.id)?.classes || [] 
-    : [];
+  const teacher = currentRole === 'teacher' 
+    ? data.teachers.find(t => (t.id || '').trim().toLowerCase() === (currentUser?.id || '').trim().toLowerCase()) || (currentUser as any)
+    : null;
+  const teacherClasses = teacher?.classes || [];
   
   // Filter students: if teacher, only students in their classes
   const students = currentRole === 'teacher' 
-    ? data.students.filter(s => teacherClasses.includes(s.class))
+    ? data.students.filter(s => isStudentInTeacherClasses(s.class, teacherClasses))
     : data.students;
 
   // Filter results: if student, only theirs. if teacher, only students in their classes.
@@ -32,7 +34,7 @@ export default function DashboardHome() {
     : currentRole === 'teacher'
     ? data.results.filter(r => {
         const student = data.students.find(s => s.id === r.studentId);
-        return student && teacherClasses.includes(student.class);
+        return student && isStudentInTeacherClasses(student.class, teacherClasses);
       })
     : data.results;
 

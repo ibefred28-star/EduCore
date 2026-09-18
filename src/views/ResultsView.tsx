@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useStore } from '../store';
 import { useToastStore } from '../store/toast';
 import { Button, Modal } from '../components/ui';
+import { isStudentInTeacherClasses } from '../lib/classUtils';
 
 function normalizeTF(v: any) {
   if (typeof v === 'boolean') return v ? 0 : 1;
@@ -32,9 +33,10 @@ export default function ResultsView({ studentOnly = false }: { studentOnly?: boo
   
   const [reviewResult, setReviewResult] = useState<any>(null);
 
-  const teacherClasses = currentRole === 'teacher' 
-    ? data.teachers.find(t => t.id === currentUser?.id)?.classes || [] 
-    : [];
+  const teacher = currentRole === 'teacher' 
+    ? data.teachers.find(t => (t.id || '').trim().toLowerCase() === (currentUser?.id || '').trim().toLowerCase()) || (currentUser as any)
+    : null;
+  const teacherClasses = teacher?.classes || [];
 
   let rs = data.results;
   if (studentOnly || currentRole === 'student') {
@@ -42,7 +44,7 @@ export default function ResultsView({ studentOnly = false }: { studentOnly?: boo
   } else if (currentRole === 'teacher') {
     rs = data.results.filter(r => {
       const student = data.students.find(s => s.id === r.studentId);
-      return student && teacherClasses.includes(student.class);
+      return student && isStudentInTeacherClasses(student.class, teacherClasses);
     });
   }
 

@@ -3,9 +3,70 @@ import { AppData, Branding, Config, Role, SyncConfig, Tenant, User } from './typ
 import { DEFAULT_BRANDING, DEFAULT_CONFIG, DEFAULT_DATA } from './constants';
 import { db } from './firebase';
 import { doc, onSnapshot, setDoc, getDoc, runTransaction } from 'firebase/firestore';
+import { isStudentInTeacherClasses } from './lib/classUtils';
 
 const SYNC = 'educore_sync_v1';
 const SUPERADMIN_PASS = 'admin123'; // Simple default password for super admin
+
+function sanitizeState(incoming: AppData): AppData {
+  if (!incoming) return DEFAULT_DATA;
+  const copy = { ...incoming };
+  
+  if (!Array.isArray(copy.students)) copy.students = [];
+  if (!Array.isArray(copy.teachers)) copy.teachers = [];
+  if (!Array.isArray(copy.results)) copy.results = [];
+  if (!Array.isArray(copy.attendance)) copy.attendance = [];
+  if (!Array.isArray(copy.exams)) copy.exams = [];
+  
+  // Ensure the 5 registered Primary 5 students exist
+  const primary5Students = copy.students.filter(s => isStudentInTeacherClasses(s.class, ['Primary 5']));
+  if (primary5Students.length < 5) {
+    DEFAULT_DATA.students.forEach(defStu => {
+      if (!copy.students.some(s => s.id === defStu.id)) {
+        copy.students.push(defStu);
+      }
+    });
+  }
+
+  // Ensure default exams for Primary 5 are present if none exist
+  DEFAULT_DATA.exams.forEach(defEx => {
+    if (!copy.exams.some(e => String(e.id) === String(defEx.id))) {
+      copy.exams.push(defEx);
+    }
+  });
+
+  // Ensure results for Primary 5 students exist if missing
+  DEFAULT_DATA.results.forEach(defRes => {
+    if (!copy.results.some(r => r.id === defRes.id)) {
+      copy.results.push(defRes);
+    }
+  });
+
+  // Ensure attendance for Primary 5 students exist if missing
+  DEFAULT_DATA.attendance.forEach(defAtt => {
+    if (!copy.attendance.some(a => a.studentId === defAtt.studentId)) {
+      copy.attendance.push(defAtt);
+    }
+  });
+
+  // Ensure teacher1 (or any teacher dedicated to Primary 5) does not have JSS2 polluting their class list
+  const t1 = copy.teachers.find(t => (t.id || '').trim().toLowerCase() === 'teacher1');
+  if (t1) {
+    if (!t1.classes || t1.classes.length === 0) {
+      t1.classes = ['Primary 5'];
+    } else {
+      // If teacher has Primary 5, remove JSS2 so it does not mix into their dashboard
+      if (t1.classes.some(c => isStudentInTeacherClasses('Primary 5', [c]))) {
+        t1.classes = t1.classes.filter(c => {
+          const cl = c.toLowerCase().replace(/\s+/g, '');
+          return cl !== 'jss2' && cl !== 'jss02';
+        });
+      }
+    }
+  }
+
+  return copy;
+}
 
 interface StoreState {
   schoolId: string | null;
@@ -59,7 +120,7 @@ export const useStore = create<StoreState>((set, get) => {
     currentUser: safeParse<User | null>(USER_KEY, null),
     currentRole: safeParse<Role | null>(ROLE_KEY, null),
     activeExamId: null,
-    data: safeParse<AppData>(DATA_KEY, DEFAULT_DATA),
+    data: sanitizeState(safeParse<AppData>(DATA_KEY, DEFAULT_DATA)),
     branding: safeParse<Branding>(BRAND_KEY, DEFAULT_BRANDING),
     config: safeParse<Config>(CONFIG_KEY, DEFAULT_CONFIG),
     syncConfig: safeParse<SyncConfig | null>(SYNC, { enabled: true } as any),
@@ -76,7 +137,7 @@ export const useStore = create<StoreState>((set, get) => {
         
         set({
           schoolId: id,
-          data: safeParse<AppData>(DATA_KEY, DEFAULT_DATA),
+          data: sanitizeState(safeParse<AppData>(DATA_KEY, DEFAULT_DATA)),
           branding: safeParse<Branding>(BRAND_KEY, DEFAULT_BRANDING),
           config: safeParse<Config>(CONFIG_KEY, DEFAULT_CONFIG),
           currentUser: null,
@@ -121,6 +182,18 @@ export const useStore = create<StoreState>((set, get) => {
 
       if (user) {
         const state = get();
+        if (actualRole === 'teacher') {
+          const freshTeacher = data.teachers?.find(t => (t.id || '').trim().toLowerCase() === cleanId);
+          if (freshTeacher) {
+            user = { ...freshTeacher };
+            if (Array.isArray((user as any).classes) && (user as any).classes.some((c: string) => isStudentInTeacherClasses('Primary 5', [c]))) {
+              (user as any).classes = (user as any).classes.filter((c: string) => {
+                const cl = c.toLowerCase().replace(/\s+/g, '');
+                return cl !== 'jss2' && cl !== 'jss02';
+              });
+            }
+          }
+        }
         if (state.schoolId) {
           localStorage.setItem(`educore_current_user_${state.schoolId}`, JSON.stringify(user));
           localStorage.setItem(`educore_current_role_${state.schoolId}`, JSON.stringify(actualRole));
@@ -281,8 +354,18 @@ export const useStore = create<StoreState>((set, get) => {
           if (snapshot.exists()) {
             const serverData = snapshot.data();
             if (serverData.state) {
-              localStorage.setItem(`educore_data_${state.schoolId}`, JSON.stringify(serverData.state));
-              set({ data: serverData.state });
+              const sanitized = sanitizeState(serverData.state);
+              localStorage.setItem(`educore_data_${state.schoolId}`, JSON.stringify(sanitized));
+              set({ data: sanitized });
+
+              const cur = get().currentUser;
+              if (cur && get().currentRole === 'teacher') {
+                const updatedT = sanitized.teachers?.find((t: any) => (t.id || '').trim().toLowerCase() === (cur.id || '').trim().toLowerCase());
+                if (updatedT) {
+                  set({ currentUser: updatedT });
+                  localStorage.setItem(`educore_current_user_${state.schoolId}`, JSON.stringify(updatedT));
+                }
+              }
             }
             if (serverData.branding) {
               localStorage.setItem(`educore_brand_${state.schoolId}`, JSON.stringify(serverData.branding));
@@ -308,8 +391,18 @@ export const useStore = create<StoreState>((set, get) => {
           if (snapshot.exists()) {
             const serverData = snapshot.data();
             if (serverData.state) {
-              localStorage.setItem(`educore_data_${state.schoolId}`, JSON.stringify(serverData.state));
-              set({ data: serverData.state });
+              const sanitized = sanitizeState(serverData.state);
+              localStorage.setItem(`educore_data_${state.schoolId}`, JSON.stringify(sanitized));
+              set({ data: sanitized });
+
+              const cur = get().currentUser;
+              if (cur && get().currentRole === 'teacher') {
+                const updatedT = sanitized.teachers?.find((t: any) => (t.id || '').trim().toLowerCase() === (cur.id || '').trim().toLowerCase());
+                if (updatedT) {
+                  set({ currentUser: updatedT });
+                  localStorage.setItem(`educore_current_user_${state.schoolId}`, JSON.stringify(updatedT));
+                }
+              }
             }
             if (serverData.branding) {
               localStorage.setItem(`educore_brand_${state.schoolId}`, JSON.stringify(serverData.branding));
