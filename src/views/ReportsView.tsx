@@ -157,16 +157,23 @@ export default function ReportsView() {
         })
       );
 
-      // 2. Allow render tree and Chart.js canvas to settle
-      await new Promise(res => setTimeout(res, 200));
+      // 2. Allow render tree and Chart.js canvas to settle completely
+      await new Promise(res => setTimeout(res, 250));
 
-      // 3. High-definition rasterization with scale: 2.8 (~270-300 DPI, razor-sharp typography, lines and badges)
-      const c = await html2canvas(reportRef.current, {
-        scale: 2.8,
+      // 3. High-definition rasterization matching exact 794px A4 element width (~288 DPI)
+      const element = reportRef.current;
+      const elementWidth = 794;
+      const elementHeight = element.scrollHeight;
+
+      const c = await html2canvas(element, {
+        scale: 3, // 3x scale (~288 DPI) for razor-sharp typography, lines, and chart rendering
         useCORS: true,
+        allowTaint: true,
         logging: false,
         backgroundColor: '#ffffff',
-        windowWidth: reportRef.current.scrollWidth || 794,
+        width: elementWidth,
+        height: elementHeight,
+        windowWidth: elementWidth,
       });
 
       // 4. Create jsPDF in portrait A4 (210 x 297 mm) with compression enabled
@@ -181,18 +188,18 @@ export default function ReportsView() {
       const img = c.toDataURL('image/png');
       const w = 210;
       const pageH = 297;
-      const h = (c.height * w) / c.width;
+      const renderedH = (c.height * w) / c.width;
 
-      // If document fits within 1 page (or with slight subpixel variance up to 302mm), fit cleanly on 1 single page
-      if (h <= pageH + 5) {
-        p.addImage(img, 'PNG', 0, 0, w, Math.min(h, pageH), undefined, 'FAST');
+      // If document fits within 1 page (or with slight tolerance up to 304mm), map precisely to 1 single A4 page
+      if (renderedH <= pageH + 7) {
+        p.addImage(img, 'PNG', 0, 0, w, pageH, undefined, 'FAST');
       } else {
         // Multi-page pagination
         let y = 0;
-        while (y < h) {
-          p.addImage(img, 'PNG', 0, -y, w, h, undefined, 'FAST');
+        while (y < renderedH) {
+          p.addImage(img, 'PNG', 0, -y, w, renderedH, undefined, 'FAST');
           y += pageH;
-          if (y < h) p.addPage();
+          if (y < renderedH) p.addPage();
         }
       }
 
@@ -237,11 +244,11 @@ export default function ReportsView() {
     const chartData = {
       labels: rows.map(x => x.sub),
       datasets: [{
-        label: 'Performance %',
+        label: 'Overall Examination Score (%)',
         data: rows.map(x => Math.max(0, Math.min(100, x.total))),
-        backgroundColor: branding.primary ? `${branding.primary}bb` : 'rgba(37, 99, 235, 0.75)',
+        backgroundColor: branding.primary ? `${branding.primary}cc` : 'rgba(37, 99, 235, 0.75)',
         borderColor: branding.primary || '#2563eb',
-        borderWidth: 1,
+        borderWidth: 1.5,
         borderRadius: 4
       }]
     };
@@ -249,8 +256,8 @@ export default function ReportsView() {
     return (
       <div 
         ref={reportRef} 
-        className="w-[210mm] min-h-[297mm] mx-auto bg-white p-[10mm] text-slate-800 text-[11px] leading-tight flex flex-col justify-between font-sans box-border shadow-md"
-        style={{ color: '#1e293b' }}
+        style={{ width: '794px', minHeight: '1123px', boxSizing: 'border-box' }}
+        className="w-[794px] min-h-[1123px] mx-auto bg-white p-7 text-slate-800 text-[11.5px] leading-snug flex flex-col justify-between font-sans box-border shadow-xs"
       >
         <div>
           {/* Official School Letterhead */}
@@ -291,7 +298,7 @@ export default function ReportsView() {
           </div>
 
           {/* Student Profile Card */}
-          <div className="grid grid-cols-12 gap-2 bg-slate-50/90 border border-slate-200 rounded-lg p-2.5 mb-3">
+          <div className="grid grid-cols-12 gap-2 bg-slate-50 border border-slate-200 rounded-lg p-2.5 mb-2.5">
             <div className="col-span-10 grid grid-cols-3 gap-y-1.5 gap-x-2 text-[11px]">
               <div>
                 <span className="text-[9px] uppercase font-bold text-slate-400 block tracking-wider">Student Name</span>
@@ -321,12 +328,46 @@ export default function ReportsView() {
 
             <div className="col-span-2 flex items-center justify-center border-l border-slate-200 pl-2">
               {s.photo ? (
-                <img src={s.photo} className="w-[68px] h-[68px] object-cover rounded-md border border-slate-300 shadow-2xs" alt="Student" crossOrigin="anonymous" />
+                <img src={s.photo} className="w-[66px] h-[66px] object-cover rounded-md border border-slate-300 shadow-2xs" alt="Student" crossOrigin="anonymous" />
               ) : (
-                <div className="w-[64px] h-[64px] rounded-md bg-slate-200 border border-slate-300 flex items-center justify-center text-slate-400 text-xs font-semibold">
+                <div className="w-[62px] h-[62px] rounded-md bg-slate-200 border border-slate-300 flex items-center justify-center text-slate-400 text-xs font-semibold">
                   Photo
                 </div>
               )}
+            </div>
+          </div>
+
+          {/* Attendance Summary - Directly Beneath Student & Term Information */}
+          <div className="mb-3 bg-slate-50/90 border border-slate-200 rounded-lg p-2.5">
+            <div className="flex items-center justify-between mb-1.5 pb-1 border-b border-slate-200">
+              <span className="text-[9.5px] uppercase font-bold tracking-wider text-slate-600">
+                Attendance & Session Summary
+              </span>
+              <span className="text-[9.5px] text-slate-500 font-medium">
+                Academic Term: <b className="text-slate-700">{reportForm.term}</b> · Session: <b className="text-slate-700">{reportForm.session}</b>
+              </span>
+            </div>
+            <div className="grid grid-cols-5 gap-2 text-center">
+              <div className="bg-white p-1.5 rounded border border-slate-200 shadow-2xs">
+                <span className="text-[8.5px] uppercase font-bold text-slate-400 block tracking-wider">School Days (Opened)</span>
+                <span className="text-sm font-extrabold text-slate-800">{reportForm.attDays || 0}</span>
+              </div>
+              <div className="bg-white p-1.5 rounded border border-slate-200 shadow-2xs">
+                <span className="text-[8.5px] uppercase font-bold text-slate-400 block tracking-wider">Days Present</span>
+                <span className="text-sm font-extrabold text-emerald-700">{reportForm.attPresent || 0}</span>
+              </div>
+              <div className="bg-white p-1.5 rounded border border-slate-200 shadow-2xs">
+                <span className="text-[8.5px] uppercase font-bold text-slate-400 block tracking-wider">Days Absent</span>
+                <span className="text-sm font-extrabold text-rose-700">{reportForm.attAbsent || 0}</span>
+              </div>
+              <div className="bg-white p-1.5 rounded border border-slate-200 shadow-2xs">
+                <span className="text-[8.5px] uppercase font-bold text-slate-400 block tracking-wider">Attendance Rate</span>
+                <span className="text-sm font-extrabold text-blue-700">{reportForm.attPercent || 0}%</span>
+              </div>
+              <div className="bg-white p-1.5 rounded border border-slate-200 shadow-2xs flex flex-col justify-center">
+                <span className="text-[8.5px] uppercase font-bold text-slate-400 block tracking-wider">Next Term Resumes</span>
+                <span className="text-[11px] font-bold text-slate-800 truncate px-0.5">{reportForm.nextTerm || 'To be communicated'}</span>
+              </div>
             </div>
           </div>
 
@@ -384,54 +425,48 @@ export default function ReportsView() {
             </table>
           </div>
 
-          {/* Performance Chart & Attendance Grid */}
-          <div className="grid grid-cols-12 gap-3 mb-3">
-            <div className="col-span-7 border border-slate-200 rounded-lg p-2 bg-white">
-              <h4 className="m-0 mb-1 text-[10px] font-bold uppercase tracking-wider text-slate-600">Subject Performance Analysis</h4>
-              <div className="h-[120px]">
-                <Bar 
-                  data={chartData} 
-                  options={{ 
-                    responsive: true, 
-                    maintainAspectRatio: false, 
-                    animation: false,
-                    plugins: { legend: { display: false } }, 
-                    scales: { 
-                      y: { max: 100, min: 0, ticks: { stepSize: 25, font: { size: 9 } } },
-                      x: { ticks: { font: { size: 9 } } }
-                    } 
-                  }} 
-                />
-              </div>
+          {/* Performance Chart - Measured over 100 for examinations */}
+          <div className="border border-slate-200 rounded-lg p-2.5 bg-white mb-3 shadow-2xs">
+            <div className="flex items-center justify-between mb-1">
+              <h4 className="m-0 text-[10.5px] font-bold uppercase tracking-wider text-slate-700">Subject Examination Performance Analysis</h4>
+              <span className="text-[9.5px] text-slate-500 font-semibold bg-slate-100 px-2 py-0.5 rounded">
+                Measured over 100
+              </span>
             </div>
-
-            <div className="col-span-5 border border-slate-200 rounded-lg p-2.5 bg-slate-50/80 flex flex-col justify-between">
-              <div>
-                <h4 className="m-0 mb-2 text-[10px] font-bold uppercase tracking-wider text-slate-600">Attendance & Conduct</h4>
-                <div className="grid grid-cols-2 gap-2 text-center">
-                  <div className="bg-white p-1.5 rounded border border-slate-200">
-                    <span className="text-[9px] uppercase text-slate-400 font-bold block">School Days</span>
-                    <span className="text-xs font-extrabold text-slate-800">{reportForm.attDays || 0}</span>
-                  </div>
-                  <div className="bg-white p-1.5 rounded border border-slate-200">
-                    <span className="text-[9px] uppercase text-slate-400 font-bold block">Days Present</span>
-                    <span className="text-xs font-extrabold text-emerald-700">{reportForm.attPresent || 0}</span>
-                  </div>
-                  <div className="bg-white p-1.5 rounded border border-slate-200">
-                    <span className="text-[9px] uppercase text-slate-400 font-bold block">Days Absent</span>
-                    <span className="text-xs font-extrabold text-rose-700">{reportForm.attAbsent || 0}</span>
-                  </div>
-                  <div className="bg-white p-1.5 rounded border border-slate-200">
-                    <span className="text-[9px] uppercase text-slate-400 font-bold block">Attendance %</span>
-                    <span className="text-xs font-extrabold text-blue-700">{reportForm.attPercent || 0}%</span>
-                  </div>
-                </div>
-              </div>
-
-              <div className="mt-2 pt-2 border-t border-slate-200 text-[10px] text-slate-500 flex justify-between items-center">
-                <span>Next Term Resumes:</span>
-                <span className="font-bold text-slate-700">{reportForm.nextTerm || 'To be communicated'}</span>
-              </div>
+            <div className="h-[135px]">
+              <Bar 
+                data={chartData} 
+                options={{ 
+                  responsive: true, 
+                  maintainAspectRatio: false, 
+                  animation: false,
+                  plugins: { 
+                    legend: { display: false },
+                    tooltip: {
+                      callbacks: {
+                        label: (ctx) => `Score: ${ctx.raw}%`
+                      }
+                    }
+                  }, 
+                  scales: { 
+                    y: { 
+                      max: 100, 
+                      min: 0, 
+                      ticks: { 
+                        stepSize: 20, 
+                        font: { size: 9 },
+                        callback: (val: any) => `${val}%`
+                      },
+                      title: {
+                        display: true,
+                        text: 'Score (out of 100)',
+                        font: { size: 9, weight: 'bold' }
+                      }
+                    },
+                    x: { ticks: { font: { size: 9.5 } } }
+                  } 
+                }} 
+              />
             </div>
           </div>
 
@@ -439,13 +474,13 @@ export default function ReportsView() {
           <div className="grid grid-cols-2 gap-3 mb-3">
             <div className="border border-slate-200 rounded-lg p-2.5 bg-white">
               <span className="text-[9px] uppercase font-bold text-slate-400 tracking-wider block mb-1">Class Teacher's Appraisal</span>
-              <p className="text-[10.5px] text-slate-700 italic m-0 min-h-[32px]">
+              <p className="text-[10.5px] text-slate-700 italic m-0 min-h-[30px]">
                 "{reportForm.teacherComment || 'Satisfactory academic performance and steady progress shown throughout the term.'}"
               </p>
             </div>
             <div className="border border-slate-200 rounded-lg p-2.5 bg-white">
               <span className="text-[9px] uppercase font-bold text-slate-400 tracking-wider block mb-1">Principal's Appraisal</span>
-              <p className="text-[10.5px] text-slate-700 italic m-0 min-h-[32px]">
+              <p className="text-[10.5px] text-slate-700 italic m-0 min-h-[30px]">
                 "{reportForm.principalComment || 'Good academic standing. Continued focus, discipline, and hard work are highly encouraged.'}"
               </p>
             </div>
@@ -455,7 +490,7 @@ export default function ReportsView() {
         {/* Bottom Section: Grading Scale, Signatures & Stamp */}
         <div>
           {/* Grading Scale Legend */}
-          <div className="py-1 px-2 mb-3 bg-slate-100 rounded text-[9.5px] text-slate-600 flex justify-between items-center border border-slate-200">
+          <div className="py-1 px-2.5 mb-2.5 bg-slate-100 rounded text-[9.5px] text-slate-600 flex justify-between items-center border border-slate-200">
             <span className="font-bold uppercase tracking-wider text-slate-700">Grading Key:</span>
             {config.grades.map(g => (
               <span key={g.grade}>
@@ -508,22 +543,24 @@ export default function ReportsView() {
     const afl = data.results.filter(r => r.studentId === studentId && (r.type === 'AFL' || ['Test', 'Quiz', 'Assignment', 'Mock', 'Other'].includes(r.type)));
     
     const getPct = (r: any) => r.rawMax > 0 ? Math.round((r.raw / r.rawMax) * 100) : 0;
+    const getScore10 = (r: any) => r.rawMax > 0 ? Math.round((r.raw / r.rawMax) * 100) / 10 : 0;
     
     const avg = afl.length ? afl.reduce((a, r) => a + getPct(r), 0) / afl.length : 0;
+    const avg10 = afl.length ? Math.round((avg / 10) * 10) / 10 : 0;
     
     const bySubject = afl.reduce((m: any, r) => {
-      (m[r.subject] = m[r.subject] || []).push(getPct(r));
+      (m[r.subject] = m[r.subject] || []).push(getScore10(r));
       return m;
     }, {});
     
     const chartData = {
       labels: Object.keys(bySubject),
       datasets: [{
-        label: 'AFL Performance %',
-        data: Object.values(bySubject).map((arr: any) => Math.round(arr.reduce((a: number,b: number) => a+b, 0) / arr.length)),
+        label: 'AFL Score (out of 10)',
+        data: Object.values(bySubject).map((arr: any) => Math.round((arr.reduce((a: number, b: number) => a + b, 0) / arr.length) * 10) / 10),
         backgroundColor: 'rgba(16, 185, 129, 0.75)',
         borderColor: '#10b981',
-        borderWidth: 1,
+        borderWidth: 1.5,
         borderRadius: 4
       }]
     };
@@ -531,8 +568,8 @@ export default function ReportsView() {
     return (
       <div 
         ref={reportRef} 
-        className="w-[210mm] min-h-[297mm] mx-auto bg-white p-[10mm] text-slate-800 text-[11px] leading-tight flex flex-col justify-between font-sans box-border shadow-md"
-        style={{ color: '#1e293b' }}
+        style={{ width: '794px', minHeight: '1123px', boxSizing: 'border-box' }}
+        className="w-[794px] min-h-[1123px] mx-auto bg-white p-7 text-slate-800 text-[11.5px] leading-snug flex flex-col justify-between font-sans box-border shadow-xs"
       >
         <div>
           {/* Official School Letterhead */}
@@ -573,7 +610,7 @@ export default function ReportsView() {
           </div>
 
           {/* Student Profile Card */}
-          <div className="grid grid-cols-12 gap-2 bg-slate-50/90 border border-slate-200 rounded-lg p-2.5 mb-3">
+          <div className="grid grid-cols-12 gap-2 bg-slate-50 border border-slate-200 rounded-lg p-2.5 mb-2.5">
             <div className="col-span-10 grid grid-cols-3 gap-y-1.5 gap-x-2 text-[11px]">
               <div>
                 <span className="text-[9px] uppercase font-bold text-slate-400 block tracking-wider">Student Name</span>
@@ -603,12 +640,46 @@ export default function ReportsView() {
 
             <div className="col-span-2 flex items-center justify-center border-l border-slate-200 pl-2">
               {s.photo ? (
-                <img src={s.photo} className="w-[68px] h-[68px] object-cover rounded-md border border-slate-300 shadow-2xs" alt="Student" crossOrigin="anonymous" />
+                <img src={s.photo} className="w-[66px] h-[66px] object-cover rounded-md border border-slate-300 shadow-2xs" alt="Student" crossOrigin="anonymous" />
               ) : (
-                <div className="w-[64px] h-[64px] rounded-md bg-slate-200 border border-slate-300 flex items-center justify-center text-slate-400 text-xs font-semibold">
+                <div className="w-[62px] h-[62px] rounded-md bg-slate-200 border border-slate-300 flex items-center justify-center text-slate-400 text-xs font-semibold">
                   Photo
                 </div>
               )}
+            </div>
+          </div>
+
+          {/* Attendance Summary - Directly Beneath Student & Term Information */}
+          <div className="mb-3 bg-emerald-50/70 border border-emerald-200 rounded-lg p-2.5">
+            <div className="flex items-center justify-between mb-1.5 pb-1 border-b border-emerald-200/80">
+              <span className="text-[9.5px] uppercase font-bold tracking-wider text-emerald-800">
+                Attendance & Assessment Summary
+              </span>
+              <span className="text-[9.5px] text-emerald-700 font-medium">
+                Academic Term: <b className="text-emerald-900">{reportForm.term}</b> · Session: <b className="text-emerald-900">{reportForm.session}</b>
+              </span>
+            </div>
+            <div className="grid grid-cols-5 gap-2 text-center">
+              <div className="bg-white p-1.5 rounded border border-emerald-100 shadow-2xs">
+                <span className="text-[8.5px] uppercase font-bold text-slate-400 block tracking-wider">School Days (Opened)</span>
+                <span className="text-sm font-extrabold text-slate-800">{reportForm.attDays || 0}</span>
+              </div>
+              <div className="bg-white p-1.5 rounded border border-emerald-100 shadow-2xs">
+                <span className="text-[8.5px] uppercase font-bold text-slate-400 block tracking-wider">Days Present</span>
+                <span className="text-sm font-extrabold text-emerald-700">{reportForm.attPresent || 0}</span>
+              </div>
+              <div className="bg-white p-1.5 rounded border border-emerald-100 shadow-2xs">
+                <span className="text-[8.5px] uppercase font-bold text-slate-400 block tracking-wider">Days Absent</span>
+                <span className="text-sm font-extrabold text-rose-700">{reportForm.attAbsent || 0}</span>
+              </div>
+              <div className="bg-white p-1.5 rounded border border-emerald-100 shadow-2xs">
+                <span className="text-[8.5px] uppercase font-bold text-slate-400 block tracking-wider">Attendance Rate</span>
+                <span className="text-sm font-extrabold text-blue-700">{reportForm.attPercent || 0}%</span>
+              </div>
+              <div className="bg-white p-1.5 rounded border border-emerald-100 shadow-2xs flex flex-col justify-center">
+                <span className="text-[8.5px] uppercase font-bold text-slate-400 block tracking-wider">AFL Tasks</span>
+                <span className="text-[11px] font-bold text-emerald-800">{afl.length} Tasks Recorded</span>
+              </div>
             </div>
           </div>
 
@@ -617,17 +688,19 @@ export default function ReportsView() {
             <table className="w-full border-collapse text-[11px]">
               <thead>
                 <tr className="bg-slate-100 text-slate-800 font-bold border-b border-slate-300">
-                  <th className="p-2 text-left w-[15%]">Date</th>
-                  <th className="p-2 text-left w-[25%]">Subject</th>
-                  <th className="p-2 text-left w-[20%]">Assessment Type</th>
-                  <th className="p-2 text-center w-[15%]">Raw Score</th>
-                  <th className="p-2 text-center w-[15%]">Percentage</th>
+                  <th className="p-2 text-left w-[14%]">Date</th>
+                  <th className="p-2 text-left w-[22%]">Subject</th>
+                  <th className="p-2 text-left w-[18%]">Assessment Type</th>
+                  <th className="p-2 text-center w-[14%]">Raw Score</th>
+                  <th className="p-2 text-center w-[12%]">Score (10)</th>
+                  <th className="p-2 text-center w-[10%]">Percentage</th>
                   <th className="p-2 text-center w-[10%]">Grade</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200">
                 {afl.map((r, i) => {
                   const pct = getPct(r);
+                  const score10 = getScore10(r);
                   const g = config.grades.find(z => pct >= z.min) || config.grades[config.grades.length - 1];
                   return (
                     <tr key={r.id} className={i % 2 === 1 ? 'bg-slate-50/50' : 'bg-white'}>
@@ -635,6 +708,7 @@ export default function ReportsView() {
                       <td className="p-1.5 px-2 font-medium text-slate-900">{r.subject}</td>
                       <td className="p-1.5 px-2 text-slate-700">{r.type}</td>
                       <td className="p-1.5 text-center text-slate-700">{r.raw} / {r.rawMax}</td>
+                      <td className="p-1.5 text-center font-bold text-emerald-700">{score10.toFixed(1)}</td>
                       <td className="p-1.5 text-center font-bold text-slate-900">{pct}%</td>
                       <td className="p-1.5 text-center">
                         <span className={`inline-block px-2 py-0.5 rounded text-[10px] ${getGradeBadge(g?.grade)}`}>
@@ -646,7 +720,7 @@ export default function ReportsView() {
                 })}
                 {afl.length === 0 && (
                   <tr>
-                    <td colSpan={6} className="p-3 text-center text-slate-500">No AFL assessments recorded for this student.</td>
+                    <td colSpan={7} className="p-3 text-center text-slate-500">No AFL assessments recorded for this student.</td>
                   </tr>
                 )}
               </tbody>
@@ -656,7 +730,8 @@ export default function ReportsView() {
                     <span className="uppercase tracking-wider text-[10px] text-slate-500 mr-2">Formative Summary:</span>
                     {afl.length} Tasks Recorded
                   </td>
-                  <td className="p-2 text-center text-emerald-700 font-extrabold">{avg.toFixed(1)}%</td>
+                  <td className="p-2 text-center text-emerald-700 font-extrabold">{avg10.toFixed(1)} / 10</td>
+                  <td className="p-2 text-center text-slate-900 font-bold">{avg.toFixed(1)}%</td>
                   <td className="p-2 text-center">
                     <span className={`inline-block px-2 py-0.5 rounded text-[10px] ${getGradeBadge(config.grades.find(z => avg >= z.min)?.grade || '')}`}>
                       {config.grades.find(z => avg >= z.min)?.grade || '-'}
@@ -667,54 +742,48 @@ export default function ReportsView() {
             </table>
           </div>
 
-          {/* Performance Chart & Attendance Grid */}
-          <div className="grid grid-cols-12 gap-3 mb-3">
-            <div className="col-span-7 border border-slate-200 rounded-lg p-2 bg-white">
-              <h4 className="m-0 mb-1 text-[10px] font-bold uppercase tracking-wider text-slate-600">AFL Subject Performance Analysis</h4>
-              <div className="h-[120px]">
-                <Bar 
-                  data={chartData} 
-                  options={{ 
-                    responsive: true, 
-                    maintainAspectRatio: false, 
-                    animation: false,
-                    plugins: { legend: { display: false } }, 
-                    scales: { 
-                      y: { max: 100, min: 0, ticks: { stepSize: 25, font: { size: 9 } } },
-                      x: { ticks: { font: { size: 9 } } }
-                    } 
-                  }} 
-                />
-              </div>
+          {/* Performance Chart - Measured by 10 for AFL */}
+          <div className="border border-emerald-200 rounded-lg p-2.5 bg-white mb-3 shadow-2xs">
+            <div className="flex items-center justify-between mb-1">
+              <h4 className="m-0 text-[10.5px] font-bold uppercase tracking-wider text-emerald-900">AFL Subject Performance Analysis</h4>
+              <span className="text-[9.5px] text-emerald-700 font-semibold bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                Measured by 10 (Scale: 0 – 10)
+              </span>
             </div>
-
-            <div className="col-span-5 border border-slate-200 rounded-lg p-2.5 bg-slate-50/80 flex flex-col justify-between">
-              <div>
-                <h4 className="m-0 mb-2 text-[10px] font-bold uppercase tracking-wider text-slate-600">Attendance Summary</h4>
-                <div className="grid grid-cols-2 gap-2 text-center">
-                  <div className="bg-white p-1.5 rounded border border-slate-200">
-                    <span className="text-[9px] uppercase text-slate-400 font-bold block">School Days</span>
-                    <span className="text-xs font-extrabold text-slate-800">{reportForm.attDays || 0}</span>
-                  </div>
-                  <div className="bg-white p-1.5 rounded border border-slate-200">
-                    <span className="text-[9px] uppercase text-slate-400 font-bold block">Days Present</span>
-                    <span className="text-xs font-extrabold text-emerald-700">{reportForm.attPresent || 0}</span>
-                  </div>
-                  <div className="bg-white p-1.5 rounded border border-slate-200">
-                    <span className="text-[9px] uppercase text-slate-400 font-bold block">Days Absent</span>
-                    <span className="text-xs font-extrabold text-rose-700">{reportForm.attAbsent || 0}</span>
-                  </div>
-                  <div className="bg-white p-1.5 rounded border border-slate-200">
-                    <span className="text-[9px] uppercase text-slate-400 font-bold block">Attendance %</span>
-                    <span className="text-xs font-extrabold text-blue-700">{reportForm.attPercent || 0}%</span>
-                  </div>
-                </div>
-              </div>
-
-              <div className="mt-2 pt-2 border-t border-slate-200 text-[10px] text-slate-500 flex justify-between items-center">
-                <span>Assessment Profile:</span>
-                <span className="font-bold text-slate-700">Formative / AFL</span>
-              </div>
+            <div className="h-[135px]">
+              <Bar 
+                data={chartData} 
+                options={{ 
+                  responsive: true, 
+                  maintainAspectRatio: false, 
+                  animation: false,
+                  plugins: { 
+                    legend: { display: false },
+                    tooltip: {
+                      callbacks: {
+                        label: (ctx) => `Score: ${ctx.raw} / 10`
+                      }
+                    }
+                  }, 
+                  scales: { 
+                    y: { 
+                      max: 10, 
+                      min: 0, 
+                      ticks: { 
+                        stepSize: 2, 
+                        font: { size: 9 },
+                        callback: (val: any) => `${val}/10`
+                      },
+                      title: {
+                        display: true,
+                        text: 'Score (out of 10)',
+                        font: { size: 9, weight: 'bold' }
+                      }
+                    }, 
+                    x: { ticks: { font: { size: 9.5 } } } 
+                  } 
+                }} 
+              />
             </div>
           </div>
 
@@ -722,13 +791,13 @@ export default function ReportsView() {
           <div className="grid grid-cols-2 gap-3 mb-3">
             <div className="border border-slate-200 rounded-lg p-2.5 bg-white">
               <span className="text-[9px] uppercase font-bold text-slate-400 tracking-wider block mb-1">Teacher's Observations</span>
-              <p className="text-[10.5px] text-slate-700 italic m-0 min-h-[32px]">
+              <p className="text-[10.5px] text-slate-700 italic m-0 min-h-[30px]">
                 "{reportForm.teacherComment || 'Consistent class participation and steady progress observed during class tasks.'}"
               </p>
             </div>
             <div className="border border-slate-200 rounded-lg p-2.5 bg-white">
               <span className="text-[9px] uppercase font-bold text-slate-400 tracking-wider block mb-1">Principal's Review</span>
-              <p className="text-[10.5px] text-slate-700 italic m-0 min-h-[32px]">
+              <p className="text-[10.5px] text-slate-700 italic m-0 min-h-[30px]">
                 "{reportForm.principalComment || 'Good formative assessment results. Continuous improvement encouraged.'}"
               </p>
             </div>
@@ -834,13 +903,10 @@ export default function ReportsView() {
               <div className="p-3 px-4 bg-slate-50 border-b border-slate-200 flex items-center justify-between sticky top-0 z-10">
                 <div className="flex items-center gap-2">
                   <span className="w-2.5 h-2.5 rounded-full bg-blue-600"></span>
-                  <h3 className="text-xs md:text-sm font-bold text-slate-800 m-0">Editable Information Panel</h3>
-                  <span className="text-[10px] uppercase tracking-wider font-semibold px-2 py-0.5 rounded bg-blue-100 text-blue-700">
-                    Scrollable Form
-                  </span>
+                  <h3 className="text-xs md:text-sm font-bold text-slate-800 m-0">Student Report Details & Remarks</h3>
                 </div>
-                <div className="text-[11px] text-slate-500">
-                  Scroll inside to view comments, attendance & signatures ↓
+                <div className="text-[11px] text-slate-500 font-medium">
+                  Live Preview Synchronization
                 </div>
               </div>
 
