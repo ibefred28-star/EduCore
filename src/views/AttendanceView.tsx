@@ -70,13 +70,42 @@ export default function AttendanceView() {
           </p>
         )}
         
-        <Label>Total school days</Label>
-        <Input type="number" min="0" value={days} onChange={e => setDays(Number(e.target.value))} />
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 mt-3">
+          <div>
+            <Label className="mt-0">Total School Days</Label>
+            <Input type="number" min="0" value={days} onChange={e => setDays(Math.max(0, Number(e.target.value)))} />
+          </div>
+          <div>
+            <Label className="mt-0">Days Present</Label>
+            <Input type="number" min="0" value={present} onChange={e => setPresent(Math.max(0, Number(e.target.value)))} />
+          </div>
+          <div>
+            <Label className="mt-0 flex items-center justify-between">
+              <span>Days Absent</span>
+              <span className="text-[10px] text-rose-600 font-bold bg-rose-50 px-1.5 py-0.2 rounded border border-rose-200">Auto</span>
+            </Label>
+            <Input 
+              type="number" 
+              readOnly 
+              className="bg-slate-100 text-rose-700 font-bold cursor-default select-all" 
+              value={Math.max(0, days - present)} 
+            />
+          </div>
+          <div>
+            <Label className="mt-0 flex items-center justify-between">
+              <span>Attendance %</span>
+              <span className="text-[10px] text-blue-600 font-bold bg-blue-50 px-1.5 py-0.2 rounded border border-blue-200">Auto</span>
+            </Label>
+            <Input 
+              type="number" 
+              readOnly 
+              className="bg-slate-100 text-blue-700 font-bold cursor-default select-all" 
+              value={days > 0 ? Math.round((present / days) * 1000) / 10 : 0} 
+            />
+          </div>
+        </div>
         
-        <Label>Days present</Label>
-        <Input type="number" min="0" value={present} onChange={e => setPresent(Number(e.target.value))} />
-        
-        <Button className="mt-[10px]" onClick={saveAttendance}>Save Attendance</Button>
+        <Button className="mt-4" onClick={saveAttendance}>Save Attendance</Button>
       </Card>
 
       <div className="overflow-x-auto bg-white rounded-lg shadow border border-slate-200">

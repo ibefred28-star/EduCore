@@ -76,11 +76,21 @@ export const Card = ({ className, children, ...props }: React.HTMLAttributes<HTM
   </div>
 );
 
-export const Modal = ({ isOpen, onClose, children }: { isOpen: boolean; onClose: () => void; children: React.ReactNode }) => {
+export const Modal = ({ 
+  isOpen, 
+  onClose, 
+  children,
+  className
+}: { 
+  isOpen: boolean; 
+  onClose: () => void; 
+  children: React.ReactNode;
+  className?: string;
+}) => {
   if (!isOpen) return null;
   return (
-    <div className="fixed inset-0 bg-slate-900/55 flex items-center justify-center p-4 z-50 overflow-y-auto">
-      <div className="bg-[var(--card)] w-full max-w-[650px] p-5 rounded-[var(--radius)] shadow-[var(--shadow)] relative">
+    <div className="fixed inset-0 bg-slate-900/55 flex items-center justify-center p-2 sm:p-4 z-50 overflow-y-auto">
+      <div className={cn('bg-[var(--card)] w-full max-w-[650px] p-5 rounded-[var(--radius)] shadow-[var(--shadow)] relative', className)}>
         {children}
       </div>
     </div>

@@ -28,6 +28,7 @@ export default function ReportsView() {
   const [reportKind, setReportKind] = useState<'academic' | 'afl'>('academic');
   
   const [reportForm, setReportForm] = useState<any>({});
+  const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
   
   const reportRef = useRef<HTMLDivElement>(null);
 
@@ -43,9 +44,13 @@ export default function ReportsView() {
     
     setReportKind(kind);
     const att = data.attendance.find(a => a.studentId === studentId) || { days: 0, present: 0, absent: 0, percent: 0 };
+    const initialDays = Number(att.days) || 0;
+    const initialPresent = Number(att.present) || 0;
+    const initialAbsent = Math.max(0, initialDays - initialPresent);
+    const initialPercent = initialDays > 0 ? Math.round((initialPresent / initialDays) * 1000) / 10 : 0;
     
     setReportForm({
-      term: s.reportTerm || 'Term 1',
+      term: s.reportTerm || 'First Term',
       session: s.reportSession || '2026/2027',
       position: s.position || '',
       nextTerm: s.nextTerm || '',
@@ -54,13 +59,34 @@ export default function ReportsView() {
       principalComment: s.principalComment || (kind === 'academic' ? 'We commend your effort and encourage continued excellence.' : 'We encourage continued progress.'),
       teacherSignature: s.teacherSignature || '',
       principalSignature: s.principalSignature || '',
-      attDays: att.days,
-      attPresent: att.present,
-      attAbsent: att.absent,
-      attPercent: att.percent
+      attDays: initialDays || '',
+      attPresent: initialPresent || '',
+      attAbsent: initialAbsent,
+      attPercent: initialPercent
     });
     
     setIsReportOpen(true);
+  };
+
+  const handleAttendanceChange = (field: 'attDays' | 'attPresent', val: string) => {
+    setReportForm((prev: any) => {
+      const nextDaysStr = field === 'attDays' ? val : String(prev.attDays ?? '');
+      const nextPresentStr = field === 'attPresent' ? val : String(prev.attPresent ?? '');
+
+      const d = nextDaysStr === '' ? 0 : Math.max(0, Number(nextDaysStr) || 0);
+      const p = nextPresentStr === '' ? 0 : Math.max(0, Number(nextPresentStr) || 0);
+
+      // Automatically calculate days absent and percentage present
+      const absent = Math.max(0, d - p);
+      const percent = d > 0 ? Math.round((p / d) * 1000) / 10 : 0;
+
+      return {
+        ...prev,
+        [field]: val,
+        attAbsent: absent,
+        attPercent: percent
+      };
+    });
   };
 
   useEffect(() => {
@@ -90,7 +116,7 @@ export default function ReportsView() {
       const days = Math.max(0, Number(reportForm.attDays) || 0);
       const present = Math.max(0, Number(reportForm.attPresent) || 0);
       if (present > days) {
-        if (!silent) showToast('Days present cannot exceed school days');
+        if (!silent) showToast('Days present cannot exceed school days opened');
         return;
       }
       
@@ -99,34 +125,86 @@ export default function ReportsView() {
         studentId,
         days,
         present,
-        absent: days - present,
-        percent: days ? Math.round((present / days) * 10000) / 100 : 0
+        absent: Math.max(0, days - present),
+        percent: days ? Math.round((present / days) * 1000) / 10 : 0
       });
     });
     if (!silent) showToast('Report details saved');
   };
 
-  const downloadPDF = () => {
+  const getGradeBadge = (grade: string) => {
+    const g = (grade || '').toUpperCase().trim();
+    if (g === 'A' || g === 'A+') return 'bg-emerald-100 text-emerald-800 font-bold border border-emerald-300';
+    if (g === 'B') return 'bg-blue-100 text-blue-800 font-bold border border-blue-300';
+    if (g === 'C') return 'bg-amber-100 text-amber-800 font-bold border border-amber-300';
+    if (g === 'D') return 'bg-orange-100 text-orange-800 font-bold border border-orange-300';
+    return 'bg-rose-100 text-rose-800 font-bold border border-rose-300';
+  };
+
+  const downloadPDF = async () => {
     if (!reportRef.current) return;
-    html2canvas(reportRef.current, { scale: 1.6, useCORS: true, logging: false }).then(c => {
-      const p = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4', compress: true });
-      // Use JPEG with 0.82 quality to dramatically reduce PDF file size below 1 MB while retaining crisp resolution
-      const img = c.toDataURL('image/jpeg', 0.82);
+    setIsGeneratingPdf(true);
+    try {
+      // 1. Wait for all images inside report card to be fully loaded (school logo, signatures, student photo)
+      const images = Array.from(reportRef.current.querySelectorAll('img')) as HTMLImageElement[];
+      await Promise.all(
+        images.map((img: HTMLImageElement) => {
+          if (img.complete) return Promise.resolve();
+          return new Promise(res => {
+            img.onload = res;
+            img.onerror = res;
+          });
+        })
+      );
+
+      // 2. Allow render tree and Chart.js canvas to settle
+      await new Promise(res => setTimeout(res, 200));
+
+      // 3. High-definition rasterization with scale: 2.8 (~270-300 DPI, razor-sharp typography, lines and badges)
+      const c = await html2canvas(reportRef.current, {
+        scale: 2.8,
+        useCORS: true,
+        logging: false,
+        backgroundColor: '#ffffff',
+        windowWidth: reportRef.current.scrollWidth || 794,
+      });
+
+      // 4. Create jsPDF in portrait A4 (210 x 297 mm) with compression enabled
+      const p = new jsPDF({
+        orientation: 'portrait',
+        unit: 'mm',
+        format: 'a4',
+        compress: true,
+      });
+
+      // 5. Use lossless PNG so all text, numbers, badges, and table lines are 100% crisp without JPEG blur
+      const img = c.toDataURL('image/png');
       const w = 210;
-      const h = c.height * 210 / c.width;
-      if (h <= 297) {
-        p.addImage(img, 'JPEG', 0, 0, 210, h, undefined, 'FAST');
+      const pageH = 297;
+      const h = (c.height * w) / c.width;
+
+      // If document fits within 1 page (or with slight subpixel variance up to 302mm), fit cleanly on 1 single page
+      if (h <= pageH + 5) {
+        p.addImage(img, 'PNG', 0, 0, w, Math.min(h, pageH), undefined, 'FAST');
       } else {
+        // Multi-page pagination
         let y = 0;
         while (y < h) {
-          p.addImage(img, 'JPEG', 0, -y, 210, h, undefined, 'FAST');
-          y += 297;
+          p.addImage(img, 'PNG', 0, -y, w, h, undefined, 'FAST');
+          y += pageH;
           if (y < h) p.addPage();
         }
       }
+
       const safeName = (s?.name || 'Student').replace(/[^a-zA-Z0-9_-]/g, '_');
       p.save(`Report_Card_${safeName}.pdf`);
-    });
+      showToast('High-quality report card downloaded successfully');
+    } catch (err) {
+      console.error('Error generating report card PDF:', err);
+      showToast('Could not generate PDF. Please try again.');
+    } finally {
+      setIsGeneratingPdf(false);
+    }
   };
 
   const s = data.students.find(x => x.id === studentId);
@@ -161,87 +239,264 @@ export default function ReportsView() {
       datasets: [{
         label: 'Performance %',
         data: rows.map(x => Math.max(0, Math.min(100, x.total))),
-        backgroundColor: 'rgba(54, 162, 235, 0.5)'
+        backgroundColor: branding.primary ? `${branding.primary}bb` : 'rgba(37, 99, 235, 0.75)',
+        borderColor: branding.primary || '#2563eb',
+        borderWidth: 1,
+        borderRadius: 4
       }]
     };
     
     return (
-      <div ref={reportRef} className="w-[210mm] min-h-[297mm] mx-auto bg-white p-[14mm] text-[#111] overflow-hidden">
-        <div className="text-center border-b-3 border-[var(--primary)] pb-2 mb-4">
-          {branding.logo && <img className="w-[70px] h-[70px] object-cover rounded-full mx-auto" src={branding.logo} alt="Logo" />}
-          <h1 className="text-2xl font-bold my-1">{branding.schoolName}</h1>
-          <h3 className="text-lg my-1">{branding.motto}</h3>
-          <p className="text-sm my-1">{branding.address} {branding.phone && ' · ' + branding.phone}</p>
-          <h2 className="text-xl font-bold mt-4 mb-1">STUDENT REPORT CARD</h2>
-          <p className="m-0"><b>{reportForm.term}</b> · {reportForm.session}</p>
+      <div 
+        ref={reportRef} 
+        className="w-[210mm] min-h-[297mm] mx-auto bg-white p-[10mm] text-slate-800 text-[11px] leading-tight flex flex-col justify-between font-sans box-border shadow-md"
+        style={{ color: '#1e293b' }}
+      >
+        <div>
+          {/* Official School Letterhead */}
+          <div className="flex items-center justify-between pb-3 border-b-2" style={{ borderColor: branding.primary || '#2563eb' }}>
+            <div className="w-[72px] h-[72px] flex items-center justify-center shrink-0">
+              {branding.logo ? (
+                <img className="max-w-[72px] max-h-[72px] object-contain rounded-full border border-slate-200 shadow-xs" src={branding.logo} alt="School Logo" crossOrigin="anonymous" />
+              ) : (
+                <div className="w-[64px] h-[64px] rounded-full flex items-center justify-center text-white font-bold text-xl shadow-xs" style={{ backgroundColor: branding.primary || '#2563eb' }}>
+                  {branding.schoolName?.charAt(0) || 'E'}
+                </div>
+              )}
+            </div>
+
+            <div className="text-center flex-1 px-3">
+              <h1 className="text-xl font-black uppercase tracking-tight text-slate-900 m-0">{branding.schoolName}</h1>
+              <p className="text-xs italic font-medium text-slate-600 mt-0.5 mb-1">{branding.motto || 'Knowledge, Discipline & Excellence'}</p>
+              <p className="text-[10px] text-slate-500 m-0">
+                {branding.address} {branding.phone ? `· Tel: ${branding.phone}` : ''}
+              </p>
+            </div>
+
+            <div className="w-[72px] flex flex-col items-center justify-center text-right shrink-0">
+              <span className="text-[9px] uppercase tracking-wider font-semibold text-slate-400">Official</span>
+              <span className="text-[10px] font-bold text-slate-700">TRANSCRIPT</span>
+              <div className="w-9 h-1 rounded-full mt-1" style={{ backgroundColor: branding.primary || '#2563eb' }} />
+            </div>
+          </div>
+
+          {/* Document Title Banner */}
+          <div className="text-center my-2.5 py-1 px-3 rounded-md bg-slate-100 flex items-center justify-between border border-slate-200">
+            <span className="text-xs font-black uppercase tracking-wider text-slate-800">
+              Official Terminal Student Report Card
+            </span>
+            <span className="text-[11px] font-semibold text-slate-600">
+              {reportForm.term} · {reportForm.session} Academic Session
+            </span>
+          </div>
+
+          {/* Student Profile Card */}
+          <div className="grid grid-cols-12 gap-2 bg-slate-50/90 border border-slate-200 rounded-lg p-2.5 mb-3">
+            <div className="col-span-10 grid grid-cols-3 gap-y-1.5 gap-x-2 text-[11px]">
+              <div>
+                <span className="text-[9px] uppercase font-bold text-slate-400 block tracking-wider">Student Name</span>
+                <span className="font-bold text-slate-900 text-xs">{s.name}</span>
+              </div>
+              <div>
+                <span className="text-[9px] uppercase font-bold text-slate-400 block tracking-wider">Student ID / Reg No</span>
+                <span className="font-semibold text-slate-800">{s.id}</span>
+              </div>
+              <div>
+                <span className="text-[9px] uppercase font-bold text-slate-400 block tracking-wider">Class</span>
+                <span className="font-semibold text-slate-800">{s.class}</span>
+              </div>
+              <div>
+                <span className="text-[9px] uppercase font-bold text-slate-400 block tracking-wider">Class Position</span>
+                <span className="font-semibold text-slate-800">{reportForm.position || '—'}</span>
+              </div>
+              <div>
+                <span className="text-[9px] uppercase font-bold text-slate-400 block tracking-wider">Academic Term</span>
+                <span className="font-semibold text-slate-800">{reportForm.term}</span>
+              </div>
+              <div>
+                <span className="text-[9px] uppercase font-bold text-slate-400 block tracking-wider">Academic Session</span>
+                <span className="font-semibold text-slate-800">{reportForm.session}</span>
+              </div>
+            </div>
+
+            <div className="col-span-2 flex items-center justify-center border-l border-slate-200 pl-2">
+              {s.photo ? (
+                <img src={s.photo} className="w-[68px] h-[68px] object-cover rounded-md border border-slate-300 shadow-2xs" alt="Student" crossOrigin="anonymous" />
+              ) : (
+                <div className="w-[64px] h-[64px] rounded-md bg-slate-200 border border-slate-300 flex items-center justify-center text-slate-400 text-xs font-semibold">
+                  Photo
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Academic Performance Table */}
+          <div className="border border-slate-300 rounded-lg overflow-hidden mb-3">
+            <table className="w-full border-collapse text-[11px]">
+              <thead>
+                <tr className="bg-slate-100 text-slate-800 font-bold border-b border-slate-300">
+                  <th className="p-2 text-left">Subject</th>
+                  <th className="p-2 text-center w-[12%]">CA 1 ({config.ca1})</th>
+                  <th className="p-2 text-center w-[12%]">CA 2 ({config.ca2})</th>
+                  <th className="p-2 text-center w-[16%]">Exam ({config.exam})</th>
+                  <th className="p-2 text-center w-[13%]">Total (100)</th>
+                  <th className="p-2 text-center w-[11%]">Grade</th>
+                  <th className="p-2 text-left w-[18%]">Remark</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-200">
+                {rows.map((r, i) => (
+                  <tr key={r.sub} className={i % 2 === 1 ? 'bg-slate-50/50' : 'bg-white'}>
+                    <td className="p-1.5 px-2 font-medium text-slate-900">{r.sub}</td>
+                    <td className="p-1.5 text-center text-slate-700">{r.x.ca1 ?? '-'}</td>
+                    <td className="p-1.5 text-center text-slate-700">{r.x.ca2 ?? '-'}</td>
+                    <td className="p-1.5 text-center text-slate-700">{r.x.exam ?? '-'}</td>
+                    <td className="p-1.5 text-center font-bold text-slate-900">{r.total}</td>
+                    <td className="p-1.5 text-center">
+                      <span className={`inline-block px-2 py-0.5 rounded text-[10px] ${getGradeBadge(r.g.grade)}`}>
+                        {r.g.grade}
+                      </span>
+                    </td>
+                    <td className="p-1.5 px-2 text-slate-600 text-[10.5px]">{r.g.remark}</td>
+                  </tr>
+                ))}
+                {rows.length === 0 && (
+                  <tr>
+                    <td colSpan={7} className="p-3 text-center text-slate-500">No examination results recorded for this term.</td>
+                  </tr>
+                )}
+              </tbody>
+              <tfoot>
+                <tr className="bg-slate-100 font-bold text-slate-900 border-t border-slate-300 text-[11px]">
+                  <td className="p-2" colSpan={4}>
+                    <span className="uppercase tracking-wider text-[10px] text-slate-500 mr-2">Overall Performance:</span>
+                    {rows.length} Subjects Evaluated
+                  </td>
+                  <td className="p-2 text-center text-blue-700 font-extrabold">{avg.toFixed(1)}%</td>
+                  <td className="p-2 text-center">
+                    <span className={`inline-block px-2 py-0.5 rounded text-[10px] ${getGradeBadge(overallGrade?.grade)}`}>
+                      {overallGrade?.grade}
+                    </span>
+                  </td>
+                  <td className="p-2 text-slate-700 text-[10.5px]">{overallGrade?.remark}</td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+
+          {/* Performance Chart & Attendance Grid */}
+          <div className="grid grid-cols-12 gap-3 mb-3">
+            <div className="col-span-7 border border-slate-200 rounded-lg p-2 bg-white">
+              <h4 className="m-0 mb-1 text-[10px] font-bold uppercase tracking-wider text-slate-600">Subject Performance Analysis</h4>
+              <div className="h-[120px]">
+                <Bar 
+                  data={chartData} 
+                  options={{ 
+                    responsive: true, 
+                    maintainAspectRatio: false, 
+                    animation: false,
+                    plugins: { legend: { display: false } }, 
+                    scales: { 
+                      y: { max: 100, min: 0, ticks: { stepSize: 25, font: { size: 9 } } },
+                      x: { ticks: { font: { size: 9 } } }
+                    } 
+                  }} 
+                />
+              </div>
+            </div>
+
+            <div className="col-span-5 border border-slate-200 rounded-lg p-2.5 bg-slate-50/80 flex flex-col justify-between">
+              <div>
+                <h4 className="m-0 mb-2 text-[10px] font-bold uppercase tracking-wider text-slate-600">Attendance & Conduct</h4>
+                <div className="grid grid-cols-2 gap-2 text-center">
+                  <div className="bg-white p-1.5 rounded border border-slate-200">
+                    <span className="text-[9px] uppercase text-slate-400 font-bold block">School Days</span>
+                    <span className="text-xs font-extrabold text-slate-800">{reportForm.attDays || 0}</span>
+                  </div>
+                  <div className="bg-white p-1.5 rounded border border-slate-200">
+                    <span className="text-[9px] uppercase text-slate-400 font-bold block">Days Present</span>
+                    <span className="text-xs font-extrabold text-emerald-700">{reportForm.attPresent || 0}</span>
+                  </div>
+                  <div className="bg-white p-1.5 rounded border border-slate-200">
+                    <span className="text-[9px] uppercase text-slate-400 font-bold block">Days Absent</span>
+                    <span className="text-xs font-extrabold text-rose-700">{reportForm.attAbsent || 0}</span>
+                  </div>
+                  <div className="bg-white p-1.5 rounded border border-slate-200">
+                    <span className="text-[9px] uppercase text-slate-400 font-bold block">Attendance %</span>
+                    <span className="text-xs font-extrabold text-blue-700">{reportForm.attPercent || 0}%</span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-2 pt-2 border-t border-slate-200 text-[10px] text-slate-500 flex justify-between items-center">
+                <span>Next Term Resumes:</span>
+                <span className="font-bold text-slate-700">{reportForm.nextTerm || 'To be communicated'}</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Teacher & Principal Remarks */}
+          <div className="grid grid-cols-2 gap-3 mb-3">
+            <div className="border border-slate-200 rounded-lg p-2.5 bg-white">
+              <span className="text-[9px] uppercase font-bold text-slate-400 tracking-wider block mb-1">Class Teacher's Appraisal</span>
+              <p className="text-[10.5px] text-slate-700 italic m-0 min-h-[32px]">
+                "{reportForm.teacherComment || 'Satisfactory academic performance and steady progress shown throughout the term.'}"
+              </p>
+            </div>
+            <div className="border border-slate-200 rounded-lg p-2.5 bg-white">
+              <span className="text-[9px] uppercase font-bold text-slate-400 tracking-wider block mb-1">Principal's Appraisal</span>
+              <p className="text-[10.5px] text-slate-700 italic m-0 min-h-[32px]">
+                "{reportForm.principalComment || 'Good academic standing. Continued focus, discipline, and hard work are highly encouraged.'}"
+              </p>
+            </div>
+          </div>
         </div>
-        
-        <div className="flex justify-between items-start">
-          <p>
-            <b>Student:</b> {s.name} &nbsp; <b>Class:</b> {s.class} &nbsp; <b>ID:</b> {s.id} 
-            {reportForm.position && <>&nbsp; <b>Position:</b> {reportForm.position}</>}
-          </p>
-          {s.photo && <img src={s.photo} className="w-[80px] h-[80px] object-cover -mt-10 border border-slate-300 shadow-sm" alt="Student" crossOrigin="anonymous" />}
-        </div>
-        
-        <table className="w-full border-collapse mt-4 text-[11px]">
-          <thead>
-            <tr className="bg-slate-100">
-              <th className="border border-slate-600 p-1.5 text-left">Subject</th>
-              <th className="border border-slate-600 p-1.5 text-left">CA 1</th>
-              <th className="border border-slate-600 p-1.5 text-left">CA 2</th>
-              <th className="border border-slate-600 p-1.5 text-left">Examination</th>
-              <th className="border border-slate-600 p-1.5 text-left">Total</th>
-              <th className="border border-slate-600 p-1.5 text-left">Grade</th>
-              <th className="border border-slate-600 p-1.5 text-left">Remark</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map(r => (
-              <tr key={r.sub}>
-                <td className="border border-slate-600 p-1.5">{r.sub}</td>
-                <td className="border border-slate-600 p-1.5">{r.x.ca1 ?? '-'}</td>
-                <td className="border border-slate-600 p-1.5">{r.x.ca2 ?? '-'}</td>
-                <td className="border border-slate-600 p-1.5">{r.x.exam ?? '-'}</td>
-                <td className="border border-slate-600 p-1.5">{r.total}</td>
-                <td className="border border-slate-600 p-1.5">{r.g.grade}</td>
-                <td className="border border-slate-600 p-1.5">{r.g.remark}</td>
-              </tr>
+
+        {/* Bottom Section: Grading Scale, Signatures & Stamp */}
+        <div>
+          {/* Grading Scale Legend */}
+          <div className="py-1 px-2 mb-3 bg-slate-100 rounded text-[9.5px] text-slate-600 flex justify-between items-center border border-slate-200">
+            <span className="font-bold uppercase tracking-wider text-slate-700">Grading Key:</span>
+            {config.grades.map(g => (
+              <span key={g.grade}>
+                <b className="text-slate-800">{g.grade}</b> ({g.min}%+) {g.remark}
+              </span>
             ))}
-          </tbody>
-        </table>
-        
-        <div className="mt-4 border border-blue-100 rounded-xl p-2 bg-white">
-          <h3 className="m-0 text-sm">Subject Performance Analysis</h3>
-          <div className="h-[240px]">
-            <Bar data={chartData} options={{ responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { y: { max: 100 } } }} />
           </div>
-        </div>
-        
-        <h3 className="mt-4 mb-2">Overall Average: {avg.toFixed(2)}% · {overallGrade?.grade} ({overallGrade?.remark})</h3>
-        
-        <h3 className="mt-2 mb-1">Attendance</h3>
-        <p className="m-0 mb-4">School Days: {reportForm.attDays} · Present: {reportForm.attPresent} · Absent: {reportForm.attAbsent} · Attendance: {reportForm.attPercent}%</p>
-        
-        <p><b>Class Teacher Comment:</b> {reportForm.teacherComment}</p>
-        <p><b>Principal Comment:</b> {reportForm.principalComment}</p>
-        
-        <div className="flex justify-between mt-10 text-center">
-          <div className="flex flex-col items-center">
-            {reportForm.teacherSignature ? (
-              <img src={reportForm.teacherSignature} alt="Teacher Signature" className="h-10 object-contain mb-1" crossOrigin="anonymous" />
-            ) : (
-              <div className="h-10 mb-1"></div>
-            )}
-            <div>____________________<br/>Class Teacher<br/>{reportForm.teacherName}</div>
+
+          {/* Official Signatures and Seal */}
+          <div className="grid grid-cols-3 gap-4 pt-2 border-t border-slate-300 text-center items-end">
+            <div className="flex flex-col items-center">
+              {reportForm.teacherSignature ? (
+                <img src={reportForm.teacherSignature} alt="Teacher Signature" className="h-10 object-contain mb-1" crossOrigin="anonymous" />
+              ) : (
+                <div className="h-10 border-b border-dashed border-slate-300 w-36 mb-1" />
+              )}
+              <div className="text-[10px] text-slate-800 font-bold">{reportForm.teacherName || 'Class Teacher'}</div>
+              <div className="text-[9px] text-slate-500 uppercase tracking-wider">Class Teacher</div>
+            </div>
+
+            <div className="flex flex-col items-center justify-center">
+              <div className="w-13 h-13 rounded-full border-2 border-dashed border-slate-300 flex flex-col items-center justify-center text-slate-400 mb-1">
+                <span className="text-[7px] uppercase font-black tracking-widest text-center leading-tight">OFFICIAL<br/>SEAL</span>
+              </div>
+              <div className="text-[9px] text-slate-500 uppercase tracking-wider">EduCore Verified</div>
+            </div>
+
+            <div className="flex flex-col items-center">
+              {reportForm.principalSignature ? (
+                <img src={reportForm.principalSignature} alt="Principal Signature" className="h-10 object-contain mb-1" crossOrigin="anonymous" />
+              ) : (
+                <div className="h-10 border-b border-dashed border-slate-300 w-36 mb-1" />
+              )}
+              <div className="text-[10px] text-slate-800 font-bold">{branding.principal || 'Principal'}</div>
+              <div className="text-[9px] text-slate-500 uppercase tracking-wider">Principal / Head of School</div>
+            </div>
           </div>
-          <div className="flex flex-col items-center">
-            {reportForm.principalSignature ? (
-              <img src={reportForm.principalSignature} alt="Principal Signature" className="h-10 object-contain mb-1" crossOrigin="anonymous" />
-            ) : (
-              <div className="h-10 mb-1"></div>
-            )}
-            <div>____________________<br/>Principal<br/>{branding.principal}</div>
+
+          <div className="mt-2 pt-1 border-t border-slate-100 text-[8.5px] text-slate-400 flex justify-between items-center">
+            <span>Official Computer-Generated Academic Transcript · Generated via EduCore Portal</span>
+            <span>Date Issued: {new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}</span>
           </div>
         </div>
       </div>
@@ -264,91 +519,257 @@ export default function ReportsView() {
     const chartData = {
       labels: Object.keys(bySubject),
       datasets: [{
-        label: 'Performance %',
-        data: Object.values(bySubject).map((arr: any) => arr.reduce((a: number,b: number) => a+b, 0) / arr.length),
-        backgroundColor: 'rgba(16, 185, 129, 0.5)'
+        label: 'AFL Performance %',
+        data: Object.values(bySubject).map((arr: any) => Math.round(arr.reduce((a: number,b: number) => a+b, 0) / arr.length)),
+        backgroundColor: 'rgba(16, 185, 129, 0.75)',
+        borderColor: '#10b981',
+        borderWidth: 1,
+        borderRadius: 4
       }]
     };
     
     return (
-      <div ref={reportRef} className="w-[210mm] min-h-[297mm] mx-auto bg-white p-[14mm] text-[#111] overflow-hidden">
-        <div className="text-center border-b-3 border-[var(--primary)] pb-2 mb-4">
-          {branding.logo && <img className="w-[70px] h-[70px] object-cover rounded-full mx-auto" src={branding.logo} alt="Logo" />}
-          <h1 className="text-2xl font-bold my-1">{branding.schoolName}</h1>
-          <h3 className="text-lg my-1">{branding.motto}</h3>
-          <p className="text-sm my-1">{branding.address}</p>
-          <h2 className="text-xl font-bold mt-4 mb-1">AFL / FORMATIVE ASSESSMENT REPORT CARD</h2>
-          <p className="m-0"><b>{reportForm.term}</b> · {reportForm.session}</p>
-        </div>
-        
-        <div className="flex justify-between items-start mb-4">
-          <p className="m-0"><b>Student:</b> {s.name} &nbsp; <b>Class:</b> {s.class} &nbsp; <b>ID:</b> {s.id}</p>
-          {s.photo && <img src={s.photo} className="w-[80px] h-[80px] object-cover -mt-10 border border-slate-300 shadow-sm" alt="Student" crossOrigin="anonymous" />}
-        </div>
-        
-        <table className="w-full border-collapse mt-4 text-[11px]">
-          <thead>
-            <tr className="bg-slate-100">
-              <th className="border border-slate-600 p-1.5 text-left">Date</th>
-              <th className="border border-slate-600 p-1.5 text-left">Subject</th>
-              <th className="border border-slate-600 p-1.5 text-left">Assessment</th>
-              <th className="border border-slate-600 p-1.5 text-left">Score</th>
-              <th className="border border-slate-600 p-1.5 text-left">Percentage</th>
-              <th className="border border-slate-600 p-1.5 text-left">Grade</th>
-            </tr>
-          </thead>
-          <tbody>
-            {afl.map(r => {
-              const pct = getPct(r);
-              const g = config.grades.find(z => pct >= z.min) || config.grades[config.grades.length - 1];
-              return (
-                <tr key={r.id}>
-                  <td className="border border-slate-600 p-1.5">{new Date(r.submittedAt).toLocaleDateString()}</td>
-                  <td className="border border-slate-600 p-1.5">{r.subject}</td>
-                  <td className="border border-slate-600 p-1.5">{r.type}</td>
-                  <td className="border border-slate-600 p-1.5">{r.raw}/{r.rawMax}</td>
-                  <td className="border border-slate-600 p-1.5">{pct}%</td>
-                  <td className="border border-slate-600 p-1.5">{g?.grade}</td>
+      <div 
+        ref={reportRef} 
+        className="w-[210mm] min-h-[297mm] mx-auto bg-white p-[10mm] text-slate-800 text-[11px] leading-tight flex flex-col justify-between font-sans box-border shadow-md"
+        style={{ color: '#1e293b' }}
+      >
+        <div>
+          {/* Official School Letterhead */}
+          <div className="flex items-center justify-between pb-3 border-b-2" style={{ borderColor: branding.primary || '#10b981' }}>
+            <div className="w-[72px] h-[72px] flex items-center justify-center shrink-0">
+              {branding.logo ? (
+                <img className="max-w-[72px] max-h-[72px] object-contain rounded-full border border-slate-200 shadow-xs" src={branding.logo} alt="School Logo" crossOrigin="anonymous" />
+              ) : (
+                <div className="w-[64px] h-[64px] rounded-full flex items-center justify-center text-white font-bold text-xl shadow-xs" style={{ backgroundColor: branding.primary || '#10b981' }}>
+                  {branding.schoolName?.charAt(0) || 'E'}
+                </div>
+              )}
+            </div>
+
+            <div className="text-center flex-1 px-3">
+              <h1 className="text-xl font-black uppercase tracking-tight text-slate-900 m-0">{branding.schoolName}</h1>
+              <p className="text-xs italic font-medium text-slate-600 mt-0.5 mb-1">{branding.motto || 'Knowledge, Discipline & Excellence'}</p>
+              <p className="text-[10px] text-slate-500 m-0">
+                {branding.address} {branding.phone ? `· Tel: ${branding.phone}` : ''}
+              </p>
+            </div>
+
+            <div className="w-[72px] flex flex-col items-center justify-center text-right shrink-0">
+              <span className="text-[9px] uppercase tracking-wider font-semibold text-emerald-600">Formative</span>
+              <span className="text-[10px] font-bold text-slate-700">AFL REPORT</span>
+              <div className="w-9 h-1 rounded-full mt-1 bg-emerald-500" />
+            </div>
+          </div>
+
+          {/* Document Title Banner */}
+          <div className="text-center my-2.5 py-1 px-3 rounded-md bg-emerald-50 flex items-center justify-between border border-emerald-200">
+            <span className="text-xs font-black uppercase tracking-wider text-emerald-900">
+              AFL / Formative Continuous Assessment Report
+            </span>
+            <span className="text-[11px] font-semibold text-emerald-800">
+              {reportForm.term} · {reportForm.session} Academic Session
+            </span>
+          </div>
+
+          {/* Student Profile Card */}
+          <div className="grid grid-cols-12 gap-2 bg-slate-50/90 border border-slate-200 rounded-lg p-2.5 mb-3">
+            <div className="col-span-10 grid grid-cols-3 gap-y-1.5 gap-x-2 text-[11px]">
+              <div>
+                <span className="text-[9px] uppercase font-bold text-slate-400 block tracking-wider">Student Name</span>
+                <span className="font-bold text-slate-900 text-xs">{s.name}</span>
+              </div>
+              <div>
+                <span className="text-[9px] uppercase font-bold text-slate-400 block tracking-wider">Student ID / Reg No</span>
+                <span className="font-semibold text-slate-800">{s.id}</span>
+              </div>
+              <div>
+                <span className="text-[9px] uppercase font-bold text-slate-400 block tracking-wider">Class</span>
+                <span className="font-semibold text-slate-800">{s.class}</span>
+              </div>
+              <div>
+                <span className="text-[9px] uppercase font-bold text-slate-400 block tracking-wider">AFL Assessments</span>
+                <span className="font-semibold text-slate-800">{afl.length} Recorded</span>
+              </div>
+              <div>
+                <span className="text-[9px] uppercase font-bold text-slate-400 block tracking-wider">Academic Term</span>
+                <span className="font-semibold text-slate-800">{reportForm.term}</span>
+              </div>
+              <div>
+                <span className="text-[9px] uppercase font-bold text-slate-400 block tracking-wider">Academic Session</span>
+                <span className="font-semibold text-slate-800">{reportForm.session}</span>
+              </div>
+            </div>
+
+            <div className="col-span-2 flex items-center justify-center border-l border-slate-200 pl-2">
+              {s.photo ? (
+                <img src={s.photo} className="w-[68px] h-[68px] object-cover rounded-md border border-slate-300 shadow-2xs" alt="Student" crossOrigin="anonymous" />
+              ) : (
+                <div className="w-[64px] h-[64px] rounded-md bg-slate-200 border border-slate-300 flex items-center justify-center text-slate-400 text-xs font-semibold">
+                  Photo
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* AFL Assessments Table */}
+          <div className="border border-slate-300 rounded-lg overflow-hidden mb-3">
+            <table className="w-full border-collapse text-[11px]">
+              <thead>
+                <tr className="bg-slate-100 text-slate-800 font-bold border-b border-slate-300">
+                  <th className="p-2 text-left w-[15%]">Date</th>
+                  <th className="p-2 text-left w-[25%]">Subject</th>
+                  <th className="p-2 text-left w-[20%]">Assessment Type</th>
+                  <th className="p-2 text-center w-[15%]">Raw Score</th>
+                  <th className="p-2 text-center w-[15%]">Percentage</th>
+                  <th className="p-2 text-center w-[10%]">Grade</th>
                 </tr>
-              );
-            })}
-            {afl.length === 0 && (
-              <tr><td colSpan={6} className="border border-slate-600 p-1.5 text-center">No AFL assessments recorded.</td></tr>
-            )}
-          </tbody>
-        </table>
-        
-        <div className="mt-4 border border-blue-100 rounded-xl p-2 bg-white">
-          <h3 className="m-0 text-sm">AFL Subject Performance Analysis</h3>
-          <div className="h-[240px]">
-            <Bar data={chartData} options={{ responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { y: { max: 100 } } }} />
+              </thead>
+              <tbody className="divide-y divide-slate-200">
+                {afl.map((r, i) => {
+                  const pct = getPct(r);
+                  const g = config.grades.find(z => pct >= z.min) || config.grades[config.grades.length - 1];
+                  return (
+                    <tr key={r.id} className={i % 2 === 1 ? 'bg-slate-50/50' : 'bg-white'}>
+                      <td className="p-1.5 px-2 text-slate-600">{new Date(r.submittedAt).toLocaleDateString()}</td>
+                      <td className="p-1.5 px-2 font-medium text-slate-900">{r.subject}</td>
+                      <td className="p-1.5 px-2 text-slate-700">{r.type}</td>
+                      <td className="p-1.5 text-center text-slate-700">{r.raw} / {r.rawMax}</td>
+                      <td className="p-1.5 text-center font-bold text-slate-900">{pct}%</td>
+                      <td className="p-1.5 text-center">
+                        <span className={`inline-block px-2 py-0.5 rounded text-[10px] ${getGradeBadge(g?.grade)}`}>
+                          {g?.grade}
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })}
+                {afl.length === 0 && (
+                  <tr>
+                    <td colSpan={6} className="p-3 text-center text-slate-500">No AFL assessments recorded for this student.</td>
+                  </tr>
+                )}
+              </tbody>
+              <tfoot>
+                <tr className="bg-slate-100 font-bold text-slate-900 border-t border-slate-300 text-[11px]">
+                  <td className="p-2" colSpan={4}>
+                    <span className="uppercase tracking-wider text-[10px] text-slate-500 mr-2">Formative Summary:</span>
+                    {afl.length} Tasks Recorded
+                  </td>
+                  <td className="p-2 text-center text-emerald-700 font-extrabold">{avg.toFixed(1)}%</td>
+                  <td className="p-2 text-center">
+                    <span className={`inline-block px-2 py-0.5 rounded text-[10px] ${getGradeBadge(config.grades.find(z => avg >= z.min)?.grade || '')}`}>
+                      {config.grades.find(z => avg >= z.min)?.grade || '-'}
+                    </span>
+                  </td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+
+          {/* Performance Chart & Attendance Grid */}
+          <div className="grid grid-cols-12 gap-3 mb-3">
+            <div className="col-span-7 border border-slate-200 rounded-lg p-2 bg-white">
+              <h4 className="m-0 mb-1 text-[10px] font-bold uppercase tracking-wider text-slate-600">AFL Subject Performance Analysis</h4>
+              <div className="h-[120px]">
+                <Bar 
+                  data={chartData} 
+                  options={{ 
+                    responsive: true, 
+                    maintainAspectRatio: false, 
+                    animation: false,
+                    plugins: { legend: { display: false } }, 
+                    scales: { 
+                      y: { max: 100, min: 0, ticks: { stepSize: 25, font: { size: 9 } } },
+                      x: { ticks: { font: { size: 9 } } }
+                    } 
+                  }} 
+                />
+              </div>
+            </div>
+
+            <div className="col-span-5 border border-slate-200 rounded-lg p-2.5 bg-slate-50/80 flex flex-col justify-between">
+              <div>
+                <h4 className="m-0 mb-2 text-[10px] font-bold uppercase tracking-wider text-slate-600">Attendance Summary</h4>
+                <div className="grid grid-cols-2 gap-2 text-center">
+                  <div className="bg-white p-1.5 rounded border border-slate-200">
+                    <span className="text-[9px] uppercase text-slate-400 font-bold block">School Days</span>
+                    <span className="text-xs font-extrabold text-slate-800">{reportForm.attDays || 0}</span>
+                  </div>
+                  <div className="bg-white p-1.5 rounded border border-slate-200">
+                    <span className="text-[9px] uppercase text-slate-400 font-bold block">Days Present</span>
+                    <span className="text-xs font-extrabold text-emerald-700">{reportForm.attPresent || 0}</span>
+                  </div>
+                  <div className="bg-white p-1.5 rounded border border-slate-200">
+                    <span className="text-[9px] uppercase text-slate-400 font-bold block">Days Absent</span>
+                    <span className="text-xs font-extrabold text-rose-700">{reportForm.attAbsent || 0}</span>
+                  </div>
+                  <div className="bg-white p-1.5 rounded border border-slate-200">
+                    <span className="text-[9px] uppercase text-slate-400 font-bold block">Attendance %</span>
+                    <span className="text-xs font-extrabold text-blue-700">{reportForm.attPercent || 0}%</span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-2 pt-2 border-t border-slate-200 text-[10px] text-slate-500 flex justify-between items-center">
+                <span>Assessment Profile:</span>
+                <span className="font-bold text-slate-700">Formative / AFL</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Teacher & Principal Remarks */}
+          <div className="grid grid-cols-2 gap-3 mb-3">
+            <div className="border border-slate-200 rounded-lg p-2.5 bg-white">
+              <span className="text-[9px] uppercase font-bold text-slate-400 tracking-wider block mb-1">Teacher's Observations</span>
+              <p className="text-[10.5px] text-slate-700 italic m-0 min-h-[32px]">
+                "{reportForm.teacherComment || 'Consistent class participation and steady progress observed during class tasks.'}"
+              </p>
+            </div>
+            <div className="border border-slate-200 rounded-lg p-2.5 bg-white">
+              <span className="text-[9px] uppercase font-bold text-slate-400 tracking-wider block mb-1">Principal's Review</span>
+              <p className="text-[10.5px] text-slate-700 italic m-0 min-h-[32px]">
+                "{reportForm.principalComment || 'Good formative assessment results. Continuous improvement encouraged.'}"
+              </p>
+            </div>
           </div>
         </div>
-        
-        <h3 className="mt-4 mb-2">AFL Average: {avg.toFixed(2)}%</h3>
-        
-        <h3 className="mt-2 mb-1">Attendance</h3>
-        <p className="m-0 mb-4">School Days: {reportForm.attDays} · Present: {reportForm.attPresent} · Absent: {reportForm.attAbsent} · Attendance: {reportForm.attPercent}%</p>
-        
-        <p><b>Teacher Comment:</b> {reportForm.teacherComment}</p>
-        <p><b>Principal Comment:</b> {reportForm.principalComment}</p>
-        
-        <div className="flex justify-between mt-10 text-center">
-          <div className="flex flex-col items-center">
-            {reportForm.teacherSignature ? (
-              <img src={reportForm.teacherSignature} alt="Teacher Signature" className="h-10 object-contain mb-1" crossOrigin="anonymous" />
-            ) : (
-              <div className="h-10 mb-1"></div>
-            )}
-            <div>____________________<br/>Class Teacher<br/>{reportForm.teacherName}</div>
+
+        {/* Bottom Section: Signatures & Stamp */}
+        <div>
+          {/* Official Signatures and Seal */}
+          <div className="grid grid-cols-3 gap-4 pt-2 border-t border-slate-300 text-center items-end">
+            <div className="flex flex-col items-center">
+              {reportForm.teacherSignature ? (
+                <img src={reportForm.teacherSignature} alt="Teacher Signature" className="h-10 object-contain mb-1" crossOrigin="anonymous" />
+              ) : (
+                <div className="h-10 border-b border-dashed border-slate-300 w-36 mb-1" />
+              )}
+              <div className="text-[10px] text-slate-800 font-bold">{reportForm.teacherName || 'Class Teacher'}</div>
+              <div className="text-[9px] text-slate-500 uppercase tracking-wider">Class Teacher</div>
+            </div>
+
+            <div className="flex flex-col items-center justify-center">
+              <div className="w-13 h-13 rounded-full border-2 border-dashed border-slate-300 flex flex-col items-center justify-center text-slate-400 mb-1">
+                <span className="text-[7px] uppercase font-black tracking-widest text-center leading-tight">OFFICIAL<br/>SEAL</span>
+              </div>
+              <div className="text-[9px] text-slate-500 uppercase tracking-wider">EduCore Verified</div>
+            </div>
+
+            <div className="flex flex-col items-center">
+              {reportForm.principalSignature ? (
+                <img src={reportForm.principalSignature} alt="Principal Signature" className="h-10 object-contain mb-1" crossOrigin="anonymous" />
+              ) : (
+                <div className="h-10 border-b border-dashed border-slate-300 w-36 mb-1" />
+              )}
+              <div className="text-[10px] text-slate-800 font-bold">{branding.principal || 'Principal'}</div>
+              <div className="text-[9px] text-slate-500 uppercase tracking-wider">Principal / Head of School</div>
+            </div>
           </div>
-          <div className="flex flex-col items-center">
-            {reportForm.principalSignature ? (
-              <img src={reportForm.principalSignature} alt="Principal Signature" className="h-10 object-contain mb-1" crossOrigin="anonymous" />
-            ) : (
-              <div className="h-10 mb-1"></div>
-            )}
-            <div>____________________<br/>Principal<br/>{branding.principal}</div>
+
+          <div className="mt-2 pt-1 border-t border-slate-100 text-[8.5px] text-slate-400 flex justify-between items-center">
+            <span>Official Computer-Generated Formative Assessment Transcript · EduCore Portal</span>
+            <span>Date Issued: {new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}</span>
           </div>
         </div>
       </div>
@@ -376,69 +797,249 @@ export default function ReportsView() {
         </div>
       </Card>
       
-      <Modal isOpen={isReportOpen} onClose={() => setIsReportOpen(false)}>
-        <div className="max-w-[1100px] w-full">
-          <Card className="mb-3">
-            <h3 className="mt-0">{reportKind === 'academic' ? 'Report Card Details' : 'AFL Report Card Details'} — {s?.name}</h3>
-            
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-              <div><Label>Term</Label><Input value={reportForm.term} onChange={e => setReportForm((p: any) => ({ ...p, term: e.target.value }))} /></div>
-              <div><Label>Session</Label><Input value={reportForm.session} onChange={e => setReportForm((p: any) => ({ ...p, session: e.target.value }))} /></div>
-              {reportKind === 'academic' && (
-                <>
-                  <div><Label>Position</Label><Input value={reportForm.position} onChange={e => setReportForm((p: any) => ({ ...p, position: e.target.value }))} /></div>
-                  <div><Label>Next Term</Label><Input value={reportForm.nextTerm} onChange={e => setReportForm((p: any) => ({ ...p, nextTerm: e.target.value }))} /></div>
-                </>
-              )}
-              <div><Label>Teacher Name</Label><Input value={reportForm.teacherName} onChange={e => setReportForm((p: any) => ({ ...p, teacherName: e.target.value }))} /></div>
+      <Modal 
+        isOpen={isReportOpen} 
+        onClose={() => setIsReportOpen(false)}
+        className="max-w-[1180px] w-[96vw] max-h-[95vh] flex flex-col p-4 md:p-5 overflow-hidden"
+      >
+        <div className="w-full flex flex-col min-h-0 flex-1 overflow-hidden">
+          {/* Top Modal Header */}
+          <div className="flex items-center justify-between pb-3 mb-3 border-b border-slate-200 shrink-0">
+            <div>
+              <h2 className="text-base md:text-lg font-bold text-slate-900 m-0">
+                {reportKind === 'academic' ? 'Academic Report Preview & Details' : 'AFL Formative Report Preview & Details'}
+              </h2>
+              <p className="text-xs text-slate-500 m-0 mt-0.5">
+                Student: <span className="font-semibold text-slate-800">{s?.name}</span> ({s?.class}) · ID: {s?.id}
+              </p>
             </div>
-            
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-3">
-              <div><Label>School Days</Label><Input type="number" value={reportForm.attDays} onChange={e => setReportForm((p: any) => ({ ...p, attDays: e.target.value }))} /></div>
-              <div><Label>Days Present</Label><Input type="number" value={reportForm.attPresent} onChange={e => setReportForm((p: any) => ({ ...p, attPresent: e.target.value }))} /></div>
-              <div><Label>Days Absent</Label><Input type="number" value={reportForm.attAbsent} onChange={e => setReportForm((p: any) => ({ ...p, attAbsent: e.target.value }))} /></div>
-              <div><Label>Attendance %</Label><Input type="number" value={reportForm.attPercent} onChange={e => setReportForm((p: any) => ({ ...p, attPercent: e.target.value }))} /></div>
+            <div className="flex items-center gap-2">
+              <span className="hidden sm:inline-block text-[11px] font-medium text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-0.5 rounded-full">
+                Real-time Preview Sync
+              </span>
+              <button 
+                onClick={() => setIsReportOpen(false)}
+                className="text-slate-400 hover:text-slate-700 p-1 rounded-md hover:bg-slate-100 text-base font-bold transition"
+                aria-label="Close"
+              >
+                ✕
+              </button>
             </div>
-            
-            <Label>Teacher Comment</Label>
-            <Textarea rows={3} value={reportForm.teacherComment} onChange={e => setReportForm((p: any) => ({ ...p, teacherComment: e.target.value }))} />
-            
-            <Label>Principal Comment</Label>
-            <Textarea rows={3} value={reportForm.principalComment} onChange={e => setReportForm((p: any) => ({ ...p, principalComment: e.target.value }))} />
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3">
-              <div>
-                <Label>Teacher Signature (Image Upload)</Label>
-                <Input type="file" accept="image/*" onChange={e => {
-                  const file = e.target.files?.[0];
-                  if (file) {
-                    const r = new FileReader();
-                    r.onload = () => setReportForm((p: any) => ({ ...p, teacherSignature: r.result }));
-                    r.readAsDataURL(file);
-                  }
-                }} />
-              </div>
-              <div>
-                <Label>Principal Signature (Image Upload)</Label>
-                <Input type="file" accept="image/*" onChange={e => {
-                  const file = e.target.files?.[0];
-                  if (file) {
-                    const r = new FileReader();
-                    r.onload = () => setReportForm((p: any) => ({ ...p, principalSignature: r.result }));
-                    r.readAsDataURL(file);
-                  }
-                }} />
-              </div>
-            </div>
-          </Card>
-          
-          <div className="overflow-auto bg-slate-200 p-4 rounded-[14px]">
-            {reportKind === 'academic' ? renderAcademicReport() : renderAflReport()}
           </div>
-          
-          <div className="flex justify-center gap-2 mt-4">
+
+          {/* Main Body - Scrollable content containing both the editable section & preview */}
+          <div className="flex-1 overflow-y-auto pr-1 space-y-4 min-h-0">
+            {/* Scrollable Editable Information Panel */}
+            <Card className="border border-slate-200 shadow-2xs p-0 overflow-hidden bg-white">
+              <div className="p-3 px-4 bg-slate-50 border-b border-slate-200 flex items-center justify-between sticky top-0 z-10">
+                <div className="flex items-center gap-2">
+                  <span className="w-2.5 h-2.5 rounded-full bg-blue-600"></span>
+                  <h3 className="text-xs md:text-sm font-bold text-slate-800 m-0">Editable Information Panel</h3>
+                  <span className="text-[10px] uppercase tracking-wider font-semibold px-2 py-0.5 rounded bg-blue-100 text-blue-700">
+                    Scrollable Form
+                  </span>
+                </div>
+                <div className="text-[11px] text-slate-500">
+                  Scroll inside to view comments, attendance & signatures ↓
+                </div>
+              </div>
+
+              {/* Scrollable inputs container */}
+              <div className="max-h-[250px] md:max-h-[290px] overflow-y-auto p-4 space-y-4">
+                {/* 1. Academic & Session Details */}
+                <div>
+                  <h4 className="text-[11px] uppercase tracking-wider font-bold text-slate-500 m-0 mb-2">Session & Class Standing</h4>
+                  <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+                    <div>
+                      <Label className="mt-0">Term</Label>
+                      <Input value={reportForm.term || ''} onChange={e => setReportForm((p: any) => ({ ...p, term: e.target.value }))} />
+                    </div>
+                    <div>
+                      <Label className="mt-0">Session</Label>
+                      <Input value={reportForm.session || ''} onChange={e => setReportForm((p: any) => ({ ...p, session: e.target.value }))} />
+                    </div>
+                    {reportKind === 'academic' && (
+                      <>
+                        <div>
+                          <Label className="mt-0">Class Position</Label>
+                          <Input placeholder="e.g. 1st / 32" value={reportForm.position || ''} onChange={e => setReportForm((p: any) => ({ ...p, position: e.target.value }))} />
+                        </div>
+                        <div>
+                          <Label className="mt-0">Next Term Resumes</Label>
+                          <Input placeholder="e.g. Sept 14, 2026" value={reportForm.nextTerm || ''} onChange={e => setReportForm((p: any) => ({ ...p, nextTerm: e.target.value }))} />
+                        </div>
+                      </>
+                    )}
+                    <div>
+                      <Label className="mt-0">Class Teacher Name</Label>
+                      <Input value={reportForm.teacherName || ''} onChange={e => setReportForm((p: any) => ({ ...p, teacherName: e.target.value }))} />
+                    </div>
+                  </div>
+                </div>
+
+                {/* 2. Attendance with Automatic Calculations */}
+                <div className="pt-3 border-t border-slate-100">
+                  <div className="flex items-center justify-between mb-2">
+                    <h4 className="text-[11px] uppercase tracking-wider font-bold text-slate-500 m-0">Attendance Record</h4>
+                    <span className="text-[10.5px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded">
+                      Absence and Attendance % auto-calculate automatically
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                    <div>
+                      <Label className="mt-0 flex items-center justify-between">
+                        <span>School Days (Opened)</span>
+                        <span className="text-[10px] text-blue-600 font-medium">Input</span>
+                      </Label>
+                      <Input 
+                        type="number" 
+                        min="0"
+                        placeholder="e.g. 100" 
+                        value={reportForm.attDays ?? ''} 
+                        onChange={e => handleAttendanceChange('attDays', e.target.value)} 
+                      />
+                    </div>
+                    <div>
+                      <Label className="mt-0 flex items-center justify-between">
+                        <span>Days Present</span>
+                        <span className="text-[10px] text-blue-600 font-medium">Input</span>
+                      </Label>
+                      <Input 
+                        type="number" 
+                        min="0"
+                        placeholder="e.g. 96" 
+                        value={reportForm.attPresent ?? ''} 
+                        onChange={e => handleAttendanceChange('attPresent', e.target.value)} 
+                      />
+                    </div>
+                    <div>
+                      <Label className="mt-0 flex items-center justify-between">
+                        <span>Days Absent</span>
+                        <span className="text-[10px] text-rose-600 font-bold bg-rose-50 px-1.5 py-0.2 rounded border border-rose-200">Auto</span>
+                      </Label>
+                      <Input 
+                        type="number" 
+                        readOnly 
+                        className="bg-slate-100 text-rose-700 font-bold cursor-default select-all" 
+                        value={reportForm.attAbsent ?? 0} 
+                      />
+                    </div>
+                    <div>
+                      <Label className="mt-0 flex items-center justify-between">
+                        <span>Attendance %</span>
+                        <span className="text-[10px] text-blue-600 font-bold bg-blue-50 px-1.5 py-0.2 rounded border border-blue-200">Auto</span>
+                      </Label>
+                      <Input 
+                        type="number" 
+                        readOnly 
+                        className="bg-slate-100 text-blue-700 font-bold cursor-default select-all" 
+                        value={reportForm.attPercent ?? 0} 
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* 3. Remarks & Signatures */}
+                <div className="pt-3 border-t border-slate-100 space-y-3">
+                  <h4 className="text-[11px] uppercase tracking-wider font-bold text-slate-500 m-0">Remarks & Signatures</h4>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div>
+                      <Label className="mt-0">Class Teacher's Appraisal Remark</Label>
+                      <Textarea 
+                        rows={2} 
+                        value={reportForm.teacherComment || ''} 
+                        onChange={e => setReportForm((p: any) => ({ ...p, teacherComment: e.target.value }))} 
+                      />
+                    </div>
+                    <div>
+                      <Label className="mt-0">Principal's Recommendation / Remark</Label>
+                      <Textarea 
+                        rows={2} 
+                        value={reportForm.principalComment || ''} 
+                        onChange={e => setReportForm((p: any) => ({ ...p, principalComment: e.target.value }))} 
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-1">
+                    <div className="bg-slate-50 p-2.5 rounded-lg border border-slate-200">
+                      <Label className="mt-0">Class Teacher Signature (Image)</Label>
+                      <Input 
+                        type="file" 
+                        accept="image/*" 
+                        onChange={e => {
+                          const file = e.target.files?.[0];
+                          if (file) {
+                            const r = new FileReader();
+                            r.onload = () => setReportForm((p: any) => ({ ...p, teacherSignature: r.result }));
+                            r.readAsDataURL(file);
+                          }
+                        }} 
+                      />
+                      {reportForm.teacherSignature && (
+                        <div className="mt-2 flex items-center justify-between bg-white p-1.5 px-2 rounded border border-slate-200">
+                          <div className="flex items-center gap-2">
+                            <img src={reportForm.teacherSignature} alt="Teacher Signature" className="h-6 max-w-[80px] object-contain" />
+                            <span className="text-[11px] text-emerald-600 font-medium">Signature uploaded</span>
+                          </div>
+                          <button 
+                            type="button" 
+                            onClick={() => setReportForm((p: any) => ({ ...p, teacherSignature: '' }))} 
+                            className="text-[11px] text-rose-500 hover:text-rose-700 hover:underline"
+                          >
+                            Remove
+                          </button>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="bg-slate-50 p-2.5 rounded-lg border border-slate-200">
+                      <Label className="mt-0">Principal Signature (Image)</Label>
+                      <Input 
+                        type="file" 
+                        accept="image/*" 
+                        onChange={e => {
+                          const file = e.target.files?.[0];
+                          if (file) {
+                            const r = new FileReader();
+                            r.onload = () => setReportForm((p: any) => ({ ...p, principalSignature: r.result }));
+                            r.readAsDataURL(file);
+                          }
+                        }} 
+                      />
+                      {reportForm.principalSignature && (
+                        <div className="mt-2 flex items-center justify-between bg-white p-1.5 px-2 rounded border border-slate-200">
+                          <div className="flex items-center gap-2">
+                            <img src={reportForm.principalSignature} alt="Principal Signature" className="h-6 max-w-[80px] object-contain" />
+                            <span className="text-[11px] text-emerald-600 font-medium">Signature uploaded</span>
+                          </div>
+                          <button 
+                            type="button" 
+                            onClick={() => setReportForm((p: any) => ({ ...p, principalSignature: '' }))} 
+                            className="text-[11px] text-rose-500 hover:text-rose-700 hover:underline"
+                          >
+                            Remove
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </Card>
+
+            {/* Section 2: Live High-Resolution Report Preview */}
+            <div className="overflow-auto bg-slate-200/90 p-3 md:p-5 rounded-[14px] flex justify-center border border-slate-300 shadow-inner">
+              {reportKind === 'academic' ? renderAcademicReport() : renderAflReport()}
+            </div>
+          </div>
+
+          {/* Sticky Modal Footer Controls */}
+          <div className="flex flex-wrap justify-center sm:justify-end items-center gap-2 pt-3 mt-2 border-t border-slate-200 shrink-0 bg-white">
             <Button variant="success" onClick={saveReportDetails}>Save Report Details</Button>
-            <Button onClick={() => { saveReportDetails(); downloadPDF(); }}>Download PDF</Button>
+            <Button disabled={isGeneratingPdf} onClick={() => { saveReportDetails(); downloadPDF(); }}>
+              {isGeneratingPdf ? 'Generating High-Res PDF...' : 'Download High-Res PDF'}
+            </Button>
             <Button variant="secondary" onClick={() => setIsReportOpen(false)}>Close</Button>
           </div>
         </div>
