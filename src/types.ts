@@ -37,8 +37,35 @@ export interface Admin extends UserBase {}
 export type User = Student | Teacher | Admin;
 
 export type QuestionType = 'mcq' | 'fill_blank' | 'true_false' | 'diagram';
+export type QuestionDifficulty = 'Easy' | 'Medium' | 'Hard';
+export type BankQuestionStatus = 'active' | 'draft' | 'archived';
+
+export interface BankQuestion {
+  id: string;
+  type: QuestionType;
+  q: string;
+  subject: string;
+  class: string;
+  topic: string;
+  subtopic: string;
+  difficulty: QuestionDifficulty;
+  tags: string[];
+  options?: string[];
+  ans?: number | boolean;
+  answers?: string[];
+  answer?: string;
+  explanation?: string;
+  image?: string;
+  marks: number;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+  status: BankQuestionStatus;
+}
 
 export interface Question {
+  id?: string;
+  bankQuestionId?: string;
   type: QuestionType;
   q: string;
   options?: string[];
@@ -46,6 +73,13 @@ export interface Question {
   answers?: string[];
   answer?: string;
   image?: string;
+  marks?: number;
+  explanation?: string;
+  subject?: string;
+  class?: string;
+  topic?: string;
+  subtopic?: string;
+  difficulty?: QuestionDifficulty;
 }
 
 export interface Exam {
@@ -95,6 +129,7 @@ export interface AppData {
   exams: Exam[];
   results: Result[];
   attendance: Attendance[];
+  questions: BankQuestion[];
 }
 
 export interface Branding {

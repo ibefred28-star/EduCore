@@ -1,6 +1,4 @@
-import { initializeApp } from 'firebase/app';
-import { getFirestore } from 'firebase/firestore';
-import config from '../firebase-applet-config.json';
+// Consolidated Firebase instance re-exported from src/lib/firebase
+export * from './lib/firebase';
+export { app, auth, db, storage, default } from './lib/firebase';
 
-const app = initializeApp(config);
-export const db = getFirestore(app, config.firestoreDatabaseId);

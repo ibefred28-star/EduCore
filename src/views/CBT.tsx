@@ -2,10 +2,18 @@ import { useEffect, useState, useRef } from 'react';
 import { useStore } from '../store';
 import { useToastStore } from '../store/toast';
 import { Button, Card, Input } from '../components/ui';
+import { Student } from '../types';
+import {
+  startStudentLiveSession,
+  updateStudentLiveProgress,
+  sendStudentLiveHeartbeat,
+  reportStudentLiveViolation,
+  completeStudentLiveSession
+} from '../lib/liveExamService';
 import confetti from 'canvas-confetti';
 
 export default function CBT() {
-  const { data, activeExamId, currentUser, updateData, config } = useStore();
+  const { data, activeExamId, currentUser, updateData, config, schoolId } = useStore();
   const showToast = useToastStore(s => s.showToast);
   
   const exam = data.exams.find(e => e.id === activeExamId);
@@ -19,12 +27,21 @@ export default function CBT() {
   const [submissionResult, setSubmissionResult] = useState<{score: number, rawMax: number, pct: number, grade: string, remark: string} | null>(null);
   
   const timerRef = useRef<any>(null);
+  const heartbeatTimerRef = useRef<any>(null);
   const violationsRef = useRef(0);
   
   useEffect(() => {
-    if (!exam) return;
+    if (!exam || !currentUser) return;
     
-    // Start timer
+    // Start real-time Firestore session for live monitoring
+    startStudentLiveSession(schoolId, exam, currentUser as Student);
+
+    // Lightweight heartbeat interval (every 15 seconds, prevents database spam)
+    heartbeatTimerRef.current = setInterval(() => {
+      sendStudentLiveHeartbeat(schoolId, exam.id, currentUser.id);
+    }, 15000);
+
+    // Start exam countdown timer
     timerRef.current = setInterval(() => {
       setTimeLeft(prev => {
         if (prev <= 1) {
@@ -35,12 +52,15 @@ export default function CBT() {
       });
     }, 1000);
     
-    // Anti-cheat
+    // Anti-cheat detection
     const handleVis = () => {
       if (document.hidden) {
         violationsRef.current += 1;
         setViolations(violationsRef.current);
         showToast(`Anti-cheat warning ${violationsRef.current}/${config.violationLimit}`);
+        // Report violation to Firestore live session
+        reportStudentLiveViolation(schoolId, exam.id, currentUser.id, violationsRef.current);
+
         if (violationsRef.current >= config.violationLimit) {
           submitExam(true);
         }
@@ -60,6 +80,7 @@ export default function CBT() {
 
     return () => {
       clearInterval(timerRef.current);
+      clearInterval(heartbeatTimerRef.current);
       document.removeEventListener('visibilitychange', handleVis);
       document.removeEventListener('contextmenu', block);
       document.removeEventListener('copy', block);
@@ -67,6 +88,20 @@ export default function CBT() {
       document.removeEventListener('paste', block);
     };
   }, [exam]);
+
+  // Sync answer progress and current question index to live session
+  useEffect(() => {
+    if (!exam || !currentUser) return;
+    const answeredCount = Object.keys(answers).filter(
+      k => answers[Number(k)] !== undefined && answers[Number(k)] !== null && answers[Number(k)] !== ''
+    ).length;
+
+    updateStudentLiveProgress(schoolId, exam.id, currentUser.id, {
+      answeredCount,
+      totalQuestions: qs.length,
+      currentQuestionIndex: qIndex
+    });
+  }, [answers, qIndex, exam, currentUser, schoolId, qs.length]);
 
   const normalizeTF = (v: any) => {
     if (typeof v === 'boolean') return v ? 0 : 1;
@@ -102,6 +137,11 @@ export default function CBT() {
     if (!exam || !currentUser) return;
     
     clearInterval(timerRef.current);
+    clearInterval(heartbeatTimerRef.current);
+
+    // Complete Firestore live session
+    completeStudentLiveSession(schoolId, exam.id, currentUser.id, auto);
+
     const score = qs.reduce((total, q, i) => total + (answerIsCorrect(q, answers[i]) ? 1 : 0), 0);
     const rawMax = qs.length;
     const max = getComponentMax(exam.type);

@@ -8,13 +8,15 @@ import SubjectsList from './SubjectsList';
 import ExamsManager from './ExamsManager';
 import ResultsView from './ResultsView';
 import ReportsView from './ReportsView';
-import { AnalyticsView } from './DashboardViews';
+import AnalyticsView from './AnalyticsView';
 import BrandingForm from './BrandingForm';
 import SettingsForm from './SettingsForm';
 import BackupRestore from './BackupRestore';
 import MyExams from './MyExams';
 import AttendanceView from './AttendanceView';
 import DashboardHome from './DashboardViews';
+import QuestionBankView from './QuestionBankView';
+import LiveExamMonitoring from './LiveExamMonitoring';
 import { isStudentInTeacherClasses } from '../lib/classUtils';
 import { CLASS_OPTIONS } from '../constants';
 
@@ -27,10 +29,10 @@ export default function Dashboard() {
   const teacherClasses = teacher?.classes || [];
 
   const navItems = currentRole === 'admin' 
-    ? ['Dashboard', 'Students', 'Teachers', 'Subjects', 'Exams', 'Results', 'Reports', 'Analytics', 'Branding', 'Settings', 'Backup']
+    ? ['Dashboard', 'Students', 'Teachers', 'Subjects', 'Question Bank', 'Exams', 'Live Exam', 'Results', 'Reports', 'Analytics', 'Branding', 'Settings', 'Backup']
     : currentRole === 'teacher'
-    ? ['Dashboard', 'My Classes', 'Exams', 'Question Bank', 'Results', 'Attendance', 'Reports']
-    : ['Dashboard', 'My Exams', 'My Results'];
+    ? ['Dashboard', 'My Classes', 'Question Bank', 'Exams', 'Live Exam', 'Results', 'Attendance', 'Analytics', 'Reports']
+    : ['Dashboard', 'My Exams', 'My Results', 'My Analytics'];
     
   const [activeTab, setActiveTab] = useState(navItems[0]);
 
@@ -39,24 +41,22 @@ export default function Dashboard() {
       case 'Dashboard': return <DashboardHome />;
       case 'Students': return <AdminStudents />;
       case 'Teachers': return <AdminTeachers />;
-      case 'Subjects': return <SubjectsList />;
-      case 'Exams': return <ExamsManager />;
+      case 'Subjects': return currentRole === 'admin' ? <SubjectsList /> : null;
+      case 'Question Bank': return currentRole !== 'student' ? <QuestionBankView /> : null;
+      case 'Exams': return currentRole !== 'student' ? <ExamsManager /> : null;
+      case 'Live Exam': return currentRole !== 'student' ? <LiveExamMonitoring /> : null;
       case 'Results': return <ResultsView studentOnly={false} />;
       case 'My Results': return <ResultsView studentOnly={true} />;
       case 'Reports': return <ReportsView />;
-      case 'Analytics': return <AnalyticsView />;
+      case 'Analytics':
+      case 'My Analytics':
+        return <AnalyticsView />;
       case 'Branding': return <BrandingForm />;
       case 'Settings': return <SettingsForm />;
       case 'Backup': return <BackupRestore />;
       case 'My Exams': return <MyExams />;
       case 'Attendance': return <AttendanceView />;
       case 'My Classes': return <MyClassesView />;
-      case 'Question Bank': return (
-        <div className="bg-[var(--card)] p-5 rounded-[var(--radius)] shadow-[var(--shadow)]">
-          <h3 className="mt-0 text-xl font-bold">Question Bank</h3>
-          <p className="text-slate-500">Questions are attached directly to exams in this standalone version. Use Create Exam to add questions.</p>
-        </div>
-      );
       default: return null;
     }
   };

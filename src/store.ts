@@ -17,6 +17,18 @@ function sanitizeState(incoming: AppData): AppData {
   if (!Array.isArray(copy.results)) copy.results = [];
   if (!Array.isArray(copy.attendance)) copy.attendance = [];
   if (!Array.isArray(copy.exams)) copy.exams = [];
+  if (!Array.isArray(copy.questions)) copy.questions = [];
+
+  // Ensure default question bank entries are seeded if none exist
+  if (copy.questions.length === 0 && DEFAULT_DATA.questions && DEFAULT_DATA.questions.length > 0) {
+    copy.questions = [...DEFAULT_DATA.questions];
+  } else if (DEFAULT_DATA.questions) {
+    DEFAULT_DATA.questions.forEach(defQ => {
+      if (!copy.questions.some(q => q.id === defQ.id)) {
+        copy.questions.push(defQ);
+      }
+    });
+  }
   
   // Ensure the 5 registered Primary 5 students exist
   const primary5Students = copy.students.filter(s => isStudentInTeacherClasses(s.class, ['Primary 5']));
