@@ -226,9 +226,9 @@ export default function ReportsView() {
       
       const pct = r.rawMax > 0 ? (r.raw / r.rawMax) : 0;
       
-      if (r.type === 'CA 1') by[r.subject].ca1 = Math.round(pct * config.ca1);
-      if (r.type === 'CA 2') by[r.subject].ca2 = Math.round(pct * config.ca2);
-      if (r.type === 'Examination') by[r.subject].exam = Math.round(pct * config.exam);
+      if (r.type === 'CA 1') by[r.subject].ca1 = r.scaled != null ? r.scaled : Math.round(pct * config.ca1);
+      if (r.type === 'CA 2') by[r.subject].ca2 = r.scaled != null ? r.scaled : Math.round(pct * config.ca2);
+      if (r.type === 'Examination') by[r.subject].exam = r.scaled != null ? r.scaled : Math.round(pct * config.exam);
     });
     
     const rows = Object.keys(by).map(sub => {

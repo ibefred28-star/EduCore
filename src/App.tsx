@@ -7,7 +7,7 @@ import SuperAdminDashboard from './views/SuperAdminDashboard';
 import { ToastRenderer } from './components/ui';
 
 export default function App() {
-  const { currentUser, currentRole, activeExamId, branding } = useStore();
+  const { currentUser, currentRole, activeExamId, branding, authLoading } = useStore();
 
   useEffect(() => {
     // Inject branding CSS variables at root level for global usage
@@ -16,6 +16,18 @@ export default function App() {
     document.documentElement.style.setProperty('--accent', branding.accent);
     document.title = branding.schoolName;
   }, [branding]);
+
+  if (authLoading) {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center bg-slate-50 gap-3">
+        <div 
+          className="w-10 h-10 border-4 rounded-full animate-spin"
+          style={{ borderColor: `${branding.primary}20`, borderTopColor: branding.primary }}
+        />
+        <p className="text-sm text-slate-500 font-medium">Verifying session...</p>
+      </div>
+    );
+  }
 
   return (
     <>

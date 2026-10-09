@@ -1,12 +1,30 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { useStore } from '../store';
 import { useToastStore } from '../store/toast';
 import { Button, Input, Label, Modal, Select } from '../components/ui';
 import { CLASS_OPTIONS } from '../constants';
+import { UserService } from '../lib/auth/userService';
+import { useStudentsSubscription } from '../hooks/useDomainSubscriptions';
 
 export default function AdminStudents() {
-  const { data, updateData } = useStore();
+  const { data, updateData, schoolId } = useStore();
   const showToast = useToastStore(s => s.showToast);
+
+  // Real-time Firestore subscription for student roster
+  const { students: liveStudents } = useStudentsSubscription(schoolId);
+
+  const displayStudents = useMemo(() => {
+    if (liveStudents && liveStudents.length > 0) {
+      return liveStudents.map(s => ({
+        id: s.id,
+        name: s.name,
+        class: s.class,
+        photo: s.photo || '',
+        password: (data.students.find(x => x.id === s.id)?.password) || 'pass'
+      }));
+    }
+    return data.students;
+  }, [liveStudents, data.students]);
   
   const [isOpen, setIsOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -16,7 +34,7 @@ export default function AdminStudents() {
 
   const openForm = (id?: string) => {
     if (id) {
-      const s = data.students.find(x => x.id === id);
+      const s = displayStudents.find(x => x.id === id);
       if (s) setFormData({ id: s.id, name: s.name, class: s.class, password: s.password || '', photo: s.photo || '' });
     } else {
       setFormData({ id: 'STU' + Date.now(), name: '', class: 'Primary 5', password: 'pass', photo: '' });
@@ -57,6 +75,18 @@ export default function AdminStudents() {
         draft.students.push(cleanStudent);
       }
     });
+
+    // Establish authoritative user profile in Firestore
+    UserService.upsertUserProfile(schoolId || 'global', {
+      uid: 'pending_' + cleanStudent.id,
+      username: cleanStudent.id,
+      name: cleanStudent.name,
+      email: `${schoolId || 'school'}.student.${cleanStudent.id}@educore.internal`,
+      role: 'student',
+      classes: [cleanStudent.class],
+      status: 'active'
+    }).catch(console.warn);
+
     showToast('Student saved');
     setIsOpen(false);
   };
@@ -99,7 +129,7 @@ export default function AdminStudents() {
             </tr>
           </thead>
           <tbody>
-            {data.students.map(s => (
+            {displayStudents.map(s => (
               <tr key={s.id} className="border-b border-slate-200 last:border-0 hover:bg-slate-50">
                 <td className="p-3">
                   {s.photo ? <img src={s.photo} alt={s.name} className="w-8 h-8 rounded-full object-cover" /> : <div className="w-8 h-8 rounded-full bg-slate-200 flex items-center justify-center text-xs">{s.name.charAt(0)}</div>}
@@ -122,7 +152,7 @@ export default function AdminStudents() {
                 </td>
               </tr>
             ))}
-            {data.students.length === 0 && (
+            {displayStudents.length === 0 && (
               <tr>
                 <td colSpan={5} className="p-8 text-center text-slate-500">
                   No students registered yet. Click &quot;+ Add Student&quot; to register students.

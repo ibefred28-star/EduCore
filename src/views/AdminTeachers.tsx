@@ -3,9 +3,10 @@ import { useStore } from '../store';
 import { useToastStore } from '../store/toast';
 import { Button, Input, Label, Modal, Select } from '../components/ui';
 import { CLASS_OPTIONS } from '../constants';
+import { UserService } from '../lib/auth/userService';
 
 export default function AdminTeachers() {
-  const { data, updateData } = useStore();
+  const { data, updateData, schoolId } = useStore();
   const showToast = useToastStore(s => s.showToast);
   
   const [isOpen, setIsOpen] = useState(false);
@@ -58,6 +59,18 @@ export default function AdminTeachers() {
         draft.teachers.push({ id: trimmedId, name: trimmedName, password: formData.password || 'pass', subjects: formData.subjects, classes: finalClasses });
       }
     });
+
+    // Establish authoritative user profile in Firestore
+    UserService.upsertUserProfile(schoolId || 'global', {
+      uid: 'pending_' + trimmedId,
+      username: trimmedId,
+      name: trimmedName,
+      email: `${schoolId || 'school'}.teacher.${trimmedId}@educore.internal`,
+      role: 'teacher',
+      classes: finalClasses,
+      status: 'active'
+    }).catch(console.warn);
+
     showToast('Teacher saved');
     setIsOpen(false);
   };

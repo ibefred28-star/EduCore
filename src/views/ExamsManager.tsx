@@ -3,6 +3,7 @@ import { useStore } from '../store';
 import { useToastStore } from '../store/toast';
 import { Button, Input, Label, Modal, Select, Textarea } from '../components/ui';
 import { Exam, Question, BankQuestion, QuestionType, QuestionDifficulty } from '../types';
+import { ExamRepository } from '../lib/firestore/repositories/examRepository';
 import {
   bankQuestionToExamQuestion,
   generateRandomExamQuestions
@@ -37,7 +38,7 @@ function questionTemplates() {
 }
 
 export default function ExamsManager() {
-  const { data, currentRole, currentUser, updateData } = useStore();
+  const { data, currentRole, currentUser, updateData, schoolId } = useStore();
   const showToast = useToastStore(s => s.showToast);
   
   const [isOpen, setIsOpen] = useState(false);
@@ -195,6 +196,22 @@ export default function ExamsManager() {
         } else {
           draft.exams.push(payload);
         }
+
+        // Persist exam and confidential keys to Firestore
+        if (schoolId) {
+          ExamRepository.saveExamWithAnswerKeys(schoolId, {
+            id: payload.id,
+            title: payload.title,
+            subject: payload.subject,
+            type: payload.type,
+            duration: payload.duration,
+            attempts: payload.attempts,
+            status: payload.status,
+            targetClasses: payload.targetClasses,
+            createdBy: payload.createdBy,
+            rawQuestions: qs
+          }).catch(err => console.warn('Could not sync exam keys to Firestore:', err));
+        }
       });
       showToast(editingId ? 'Exam updated' : 'Exam saved');
       setIsOpen(false);
@@ -206,7 +223,23 @@ export default function ExamsManager() {
   const changeStatus = (id: string | number, status: string) => {
     updateData(draft => {
       const e = draft.exams.find(x => x.id === id);
-      if (e) e.status = status as any;
+      if (e) {
+        e.status = status as any;
+        if (schoolId) {
+          ExamRepository.saveExamWithAnswerKeys(schoolId, {
+            id: e.id,
+            title: e.title,
+            subject: e.subject,
+            type: e.type,
+            duration: e.duration,
+            attempts: e.attempts,
+            status: e.status,
+            targetClasses: e.targetClasses || [],
+            createdBy: e.createdBy,
+            rawQuestions: e.questions
+          }).catch(console.warn);
+        }
+      }
     });
     showToast('Status updated');
   };
@@ -217,6 +250,9 @@ export default function ExamsManager() {
 
   const confirmDelete = () => {
     if (deleteConfirm) {
+      if (schoolId) {
+        ExamRepository.deleteExam(schoolId, deleteConfirm).catch(console.warn);
+      }
       updateData(draft => {
         draft.exams = draft.exams.filter(x => x.id !== deleteConfirm);
         draft.results = draft.results.filter(x => x.examId !== deleteConfirm);

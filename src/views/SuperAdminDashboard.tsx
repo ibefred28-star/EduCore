@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useStore } from '../store';
 import { useToastStore } from '../store/toast';
 import { Button, Card, Input, Label, Modal } from '../components/ui';
+import { UserService } from '../lib/auth/userService';
 
 export default function SuperAdminDashboard() {
   const { globalTenants, createTenant, deleteTenant, toggleTenantStatus, logout } = useStore();
@@ -35,6 +36,16 @@ export default function SuperAdminDashboard() {
     );
 
     if (result.success) {
+      // Establish initial administrator profile in Firestore
+      UserService.upsertUserProfile(formData.schoolId.toLowerCase(), {
+        uid: 'pending_' + formData.adminId.toLowerCase(),
+        username: formData.adminId.toLowerCase(),
+        name: 'Initial Admin',
+        email: `${formData.schoolId.toLowerCase()}.admin.${formData.adminId.toLowerCase()}@educore.internal`,
+        role: 'admin',
+        status: 'active'
+      }).catch(console.warn);
+
       showToast(`School ${formData.schoolName} created successfully!`);
       setIsCreating(false);
       setFormData({ schoolId: '', schoolName: '', adminId: '', adminPass: '' });

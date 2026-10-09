@@ -4,9 +4,10 @@ import { DEFAULT_BRANDING, DEFAULT_CONFIG, DEFAULT_DATA } from './constants';
 import { db } from './firebase';
 import { doc, onSnapshot, setDoc, getDoc, runTransaction } from 'firebase/firestore';
 import { isStudentInTeacherClasses } from './lib/classUtils';
+import { AuthService, LegacyAccountChecker } from './lib/auth/authService';
+import { ExamRepository } from './lib/firestore/repositories/examRepository';
 
 const SYNC = 'educore_sync_v1';
-const SUPERADMIN_PASS = 'admin123'; // Simple default password for super admin
 
 function sanitizeState(incoming: AppData): AppData {
   if (!incoming) return DEFAULT_DATA;
@@ -84,6 +85,7 @@ interface StoreState {
   schoolId: string | null;
   currentUser: User | null;
   currentRole: Role | null;
+  authLoading: boolean;
   activeExamId: string | number | null;
   data: AppData;
   branding: Branding;
@@ -97,9 +99,9 @@ interface StoreState {
   
   // Actions
   setSchoolId: (id: string | null) => void;
-  login: (role: Role, id: string, pass: string) => { success: boolean; error?: string };
-  loginSuperAdmin: (pass: string) => boolean;
-  logout: () => void;
+  login: (role: Role, id: string, pass: string) => Promise<{ success: boolean; error?: string }>;
+  loginSuperAdmin: (pass: string) => Promise<{ success: boolean; error?: string }>;
+  logout: () => Promise<void>;
   updateData: (updater: (draft: AppData) => AppData | void) => void;
   updateBranding: (branding: Branding) => void;
   updateConfig: (config: Config) => void;
@@ -124,13 +126,12 @@ export const useStore = create<StoreState>((set, get) => {
   const DATA_KEY = initialSchoolId ? `educore_data_${initialSchoolId}` : 'educore_data_v2';
   const BRAND_KEY = initialSchoolId ? `educore_brand_${initialSchoolId}` : 'educore_brand_v2';
   const CONFIG_KEY = initialSchoolId ? `educore_config_${initialSchoolId}` : 'educore_config_v2';
-  const USER_KEY = initialSchoolId ? `educore_current_user_${initialSchoolId}` : 'educore_current_user';
-  const ROLE_KEY = initialSchoolId ? `educore_current_role_${initialSchoolId}` : 'educore_current_role';
 
   return {
     schoolId: initialSchoolId,
-    currentUser: safeParse<User | null>(USER_KEY, null),
-    currentRole: safeParse<Role | null>(ROLE_KEY, null),
+    currentUser: null,
+    currentRole: null,
+    authLoading: true,
     activeExamId: null,
     data: sanitizeState(safeParse<AppData>(DATA_KEY, DEFAULT_DATA)),
     branding: safeParse<Branding>(BRAND_KEY, DEFAULT_BRANDING),
@@ -151,12 +152,8 @@ export const useStore = create<StoreState>((set, get) => {
           schoolId: id,
           data: sanitizeState(safeParse<AppData>(DATA_KEY, DEFAULT_DATA)),
           branding: safeParse<Branding>(BRAND_KEY, DEFAULT_BRANDING),
-          config: safeParse<Config>(CONFIG_KEY, DEFAULT_CONFIG),
-          currentUser: null,
-          currentRole: null
+          config: safeParse<Config>(CONFIG_KEY, DEFAULT_CONFIG)
         });
-        localStorage.removeItem(`educore_current_user_${id}`);
-        localStorage.removeItem(`educore_current_role_${id}`);
         get().initSync();
       } else {
         localStorage.removeItem('educore_school_id');
@@ -167,124 +164,138 @@ export const useStore = create<StoreState>((set, get) => {
       }
     },
 
-    login: (role, id, pass) => {
-      const trimmedId = id ? id.trim() : '';
-      const trimmedPass = pass ? pass.trim() : '';
+    login: async (role, id, pass) => {
+      const trimmedId = (id || '').trim();
+      const trimmedPass = (pass || '').trim();
       if (!trimmedId || !trimmedPass) {
         return { success: false, error: 'Please enter both Username/ID and password' };
       }
 
-      const cleanId = trimmedId.toLowerCase();
-      const data = get().data;
-      
-      const students = data.students || DEFAULT_DATA.students;
-      const teachers = data.teachers || DEFAULT_DATA.teachers;
-      const admins = data.admins || DEFAULT_DATA.admins;
-
-      // Strict role verification: only search the user collection for the SELECTED role
-      let user: any = undefined;
-      if (role === 'admin') {
-        user = admins.find(u => (u.id || '').trim().toLowerCase() === cleanId);
-      } else if (role === 'teacher') {
-        user = teachers.find(u => (u.id || '').trim().toLowerCase() === cleanId);
-      } else if (role === 'student') {
-        user = students.find(u => (u.id || '').trim().toLowerCase() === cleanId);
-      }
-
-      // If user does not exist in the selected role, check if they exist under a DIFFERENT role to prevent role confusion
-      if (!user) {
-        const inTeacher = teachers.some(u => (u.id || '').trim().toLowerCase() === cleanId);
-        const inStudent = students.some(u => (u.id || '').trim().toLowerCase() === cleanId);
-        const inAdmin = admins.some(u => (u.id || '').trim().toLowerCase() === cleanId);
-
-        if (inTeacher && role !== 'teacher') {
-          return {
-            success: false,
-            error: `ID "${trimmedId}" belongs to a Teacher. Please select "Teacher" in the Role dropdown to sign in.`
-          };
-        }
-        if (inStudent && role !== 'student') {
-          return {
-            success: false,
-            error: `ID "${trimmedId}" belongs to a Student. Please select "Student" in the Role dropdown to sign in.`
-          };
-        }
-        if (inAdmin && role !== 'admin') {
-          return {
-            success: false,
-            error: `ID "${trimmedId}" belongs to a School Administrator. Please select "School Administrator" in the Role dropdown to sign in.`
-          };
-        }
-
-        const roleLabel = role === 'admin' ? 'School Administrator' : role === 'teacher' ? 'Teacher' : 'Student';
-        return { success: false, error: `No ${roleLabel} account found with ID "${trimmedId}".` };
-      }
-
-      // Validate password for this user
-      if (user.password !== pass) {
-        return { success: false, error: 'Incorrect password. Please try again.' };
-      }
-
-      // Successful login under selected role
       const state = get();
-      if (role === 'teacher') {
-        const freshTeacher = data.teachers?.find(t => (t.id || '').trim().toLowerCase() === cleanId);
-        if (freshTeacher) {
-          user = { ...freshTeacher };
-          if (Array.isArray((user as any).classes) && (user as any).classes.some((c: string) => isStudentInTeacherClasses('Primary 5', [c]))) {
-            (user as any).classes = (user as any).classes.filter((c: string) => {
-              const cl = c.toLowerCase().replace(/\s+/g, '');
-              return cl !== 'jss2' && cl !== 'jss02';
-            });
-          }
-        }
+      const schoolId = state.schoolId;
+      if (!schoolId) {
+        return { success: false, error: 'Please select a school first' };
       }
 
-      if (state.schoolId) {
-        localStorage.setItem(`educore_current_user_${state.schoolId}`, JSON.stringify(user));
-        localStorage.setItem(`educore_current_role_${state.schoolId}`, JSON.stringify(role));
-      } else {
-        localStorage.setItem('educore_current_user', JSON.stringify(user));
-        localStorage.setItem('educore_current_role', JSON.stringify(role));
+      // Legacy checker callback to enable seamless migration of initial roster accounts
+      const legacyChecker: LegacyAccountChecker = (schId, targetRole, uId, userPass) => {
+        const data = get().data;
+        const students = data.students || DEFAULT_DATA.students;
+        const teachers = data.teachers || DEFAULT_DATA.teachers;
+        const admins = data.admins || DEFAULT_DATA.admins;
+        const cleanId = uId.toLowerCase();
+
+        // Check if ID exists in a different role to prevent role confusion
+        const inTeacher = teachers.find(u => (u.id || '').trim().toLowerCase() === cleanId);
+        const inStudent = students.find(u => (u.id || '').trim().toLowerCase() === cleanId);
+        const inAdmin = admins.find(u => (u.id || '').trim().toLowerCase() === cleanId);
+
+        if (inTeacher && targetRole !== 'teacher') return { found: true, mismatchedRole: 'teacher' };
+        if (inStudent && targetRole !== 'student') return { found: true, mismatchedRole: 'student' };
+        if (inAdmin && targetRole !== 'admin') return { found: true, mismatchedRole: 'admin' };
+
+        let user: any = undefined;
+        if (targetRole === 'admin') user = inAdmin;
+        else if (targetRole === 'teacher') user = inTeacher;
+        else if (targetRole === 'student') user = inStudent;
+
+        if (!user) return { found: false };
+
+        return {
+          found: true,
+          passwordMatches: user.password === userPass,
+          displayName: user.name,
+          classes: user.classes || (user.class ? [user.class] : [])
+        };
+      };
+
+      const authRes = await AuthService.signInWithCredentials(
+        schoolId,
+        role,
+        trimmedId,
+        trimmedPass,
+        legacyChecker
+      );
+
+      if (!authRes.user) {
+        return { success: false, error: authRes.error || 'Authentication failed' };
       }
-      set({ currentUser: user, currentRole: role });
+
+      // Construct currentUser object compatible with existing components
+      const authenticatedUser = authRes.user;
+      const data = get().data;
+      let enrichedUser: any = {
+        id: authenticatedUser.userId,
+        name: authenticatedUser.displayName,
+        uid: authenticatedUser.uid,
+        email: authenticatedUser.email || undefined
+      };
+
+      if (role === 'student') {
+        const existingStudent = data.students?.find(s => s.id.toLowerCase() === authenticatedUser.userId.toLowerCase());
+        enrichedUser = {
+          ...enrichedUser,
+          class: existingStudent?.class || 'Primary 5',
+          photo: existingStudent?.photo || ''
+        };
+      } else if (role === 'teacher') {
+        const existingTeacher = data.teachers?.find(t => t.id.toLowerCase() === authenticatedUser.userId.toLowerCase());
+        enrichedUser = {
+          ...enrichedUser,
+          classes: existingTeacher?.classes || ['Primary 5'],
+          subjects: existingTeacher?.subjects || ['Math']
+        };
+      }
+
+      set({
+        currentUser: enrichedUser,
+        currentRole: role,
+        authLoading: false
+      });
+
       get().initSync();
       return { success: true };
     },
 
-    loginSuperAdmin: (pass) => {
-      if (pass === SUPERADMIN_PASS) {
-        const user = { id: 'superadmin', name: 'Super Administrator' } as User;
-        localStorage.setItem('educore_current_user', JSON.stringify(user));
-        localStorage.setItem('educore_current_role', JSON.stringify('superadmin'));
-        set({ 
-          currentRole: 'superadmin', 
-          currentUser: user,
-          schoolId: null 
-        });
-        get().initSync(); // This will fetch the global tenants since role is superadmin
-        return true;
+    loginSuperAdmin: async (pass) => {
+      const authRes = await AuthService.signInWithCredentials(null, 'superadmin', 'superadmin', pass);
+      if (!authRes.user) {
+        return { success: false, error: authRes.error || 'Invalid super admin password' };
       }
-      return false;
+
+      const user = {
+        id: 'superadmin',
+        name: authRes.user.displayName,
+        uid: authRes.user.uid,
+        email: authRes.user.email || undefined
+      } as User;
+
+      set({
+        currentRole: 'superadmin',
+        currentUser: user,
+        schoolId: null,
+        authLoading: false
+      });
+
+      get().initSync();
+      return { success: true };
     },
 
-    logout: () => {
-      const state = get();
-      if (state.schoolId) {
-        localStorage.removeItem(`educore_current_user_${state.schoolId}`);
-        localStorage.removeItem(`educore_current_role_${state.schoolId}`);
-      } else {
-        localStorage.removeItem('educore_current_user');
-        localStorage.removeItem('educore_current_role');
-      }
-      set({ currentUser: null, currentRole: null });
+    logout: async () => {
+      await AuthService.signOut();
       const unsub = get().unsubscribeSnapshot;
       if (unsub) unsub();
       
       const unsubT = get().unsubscribeTenants;
       if (unsubT) unsubT();
       
-      set({ unsubscribeSnapshot: null, unsubscribeTenants: null });
+      set({
+        currentUser: null,
+        currentRole: null,
+        unsubscribeSnapshot: null,
+        unsubscribeTenants: null,
+        authLoading: false
+      });
       // We don't clear schoolId on logout so they stay on the school's login page unless they were superadmin
     },
 
@@ -427,6 +438,22 @@ export const useStore = create<StoreState>((set, get) => {
               config: state.config,
               updatedAt: new Date().toISOString()
             }, { merge: true });
+
+            // Seed confidential exam keys for default exams
+            state.data.exams.forEach(ex => {
+              ExamRepository.saveExamWithAnswerKeys(state.schoolId!, {
+                id: ex.id,
+                title: ex.title,
+                subject: ex.subject,
+                type: ex.type,
+                duration: ex.duration,
+                attempts: ex.attempts || 1,
+                status: ex.status,
+                targetClasses: ex.targetClasses || [],
+                createdBy: ex.createdBy,
+                rawQuestions: ex.questions
+              }).catch(() => {});
+            });
           }
         });
         
@@ -505,6 +532,22 @@ export const useStore = create<StoreState>((set, get) => {
           config: DEFAULT_CONFIG,
           updatedAt: new Date().toISOString()
         });
+
+        // Seed confidential exam keys for default exams
+        initialData.exams.forEach((ex: any) => {
+          ExamRepository.saveExamWithAnswerKeys(cleanId, {
+            id: ex.id,
+            title: ex.title,
+            subject: ex.subject,
+            type: ex.type,
+            duration: ex.duration,
+            attempts: ex.attempts || 1,
+            status: ex.status,
+            targetClasses: ex.targetClasses || [],
+            createdBy: ex.createdBy,
+            rawQuestions: ex.questions
+          }).catch(() => {});
+        });
         
         return { success: true };
       } catch (e: any) {
@@ -565,3 +608,47 @@ export const useStore = create<StoreState>((set, get) => {
     }
   };
 });
+
+// Authoritative Firebase Authentication state observer to restore user sessions on reload
+AuthService.initAuthObserver(async (authUser) => {
+  if (authUser) {
+    const state = useStore.getState();
+    const role = authUser.role;
+    const schoolId = authUser.schoolId !== 'global' && authUser.schoolId ? authUser.schoolId : null;
+    
+    // Enrich with class roster attributes if present
+    const data = state.data;
+    let enrichedUser: any = {
+      id: authUser.userId,
+      name: authUser.displayName,
+      uid: authUser.uid,
+      email: authUser.email || undefined
+    };
+
+    if (role === 'student') {
+      const s = data.students?.find(x => x.id.toLowerCase() === authUser.userId.toLowerCase());
+      enrichedUser.class = s?.class || 'Primary 5';
+      enrichedUser.photo = s?.photo || '';
+    } else if (role === 'teacher') {
+      const t = data.teachers?.find(x => x.id.toLowerCase() === authUser.userId.toLowerCase());
+      enrichedUser.classes = t?.classes || ['Primary 5'];
+      enrichedUser.subjects = t?.subjects || ['Math'];
+    }
+
+    useStore.setState({
+      schoolId: schoolId || state.schoolId,
+      currentUser: enrichedUser,
+      currentRole: role,
+      authLoading: false
+    });
+
+    useStore.getState().initSync();
+  } else {
+    useStore.setState({
+      currentUser: null,
+      currentRole: null,
+      authLoading: false
+    });
+  }
+});
+

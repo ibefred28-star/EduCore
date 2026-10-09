@@ -11,26 +11,37 @@ export default function Login() {
   const [role, setRole] = useState<Role | 'superadmin'>('student');
   const [id, setId] = useState('');
   const [password, setPassword] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
   
   const [tempSchoolId, setTempSchoolId] = useState('');
 
-  // Handle super admin login directly from the dropdown
-  const handleLogin = () => {
-    if (role === 'superadmin') {
-      if (loginSuperAdmin(password)) {
-        showToast('Welcome, Super Administrator');
-      } else {
-        showToast('Invalid super admin password');
+  // Handle super admin and normal login via Firebase Authentication
+  const handleLogin = async () => {
+    if (isLoading) return;
+    setIsLoading(true);
+
+    try {
+      if (role === 'superadmin') {
+        const res = await loginSuperAdmin(password);
+        if (res.success) {
+          showToast('Welcome, Super Administrator');
+        } else {
+          showToast(res.error || 'Invalid super admin password');
+        }
+        return;
       }
-      return;
-    }
-    
-    // Normal login
-    const res = login(role as Role, id, password);
-    if (res.success) {
-      showToast('Login successful');
-    } else {
-      showToast(res.error || 'Invalid credentials');
+      
+      // School user login
+      const res = await login(role as Role, id, password);
+      if (res.success) {
+        showToast('Login successful');
+      } else {
+        showToast(res.error || 'Invalid credentials');
+      }
+    } catch (err: any) {
+      showToast(err.message || 'An unexpected error occurred during sign in');
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -97,7 +108,9 @@ export default function Login() {
               onKeyDown={e => e.key === 'Enter' && handleLogin()}
               placeholder="admin123"
             />
-            <Button className="w-full mt-6" onClick={handleLogin}>Access Global Portal</Button>
+            <Button className="w-full mt-6" onClick={handleLogin} disabled={isLoading}>
+              {isLoading ? 'Verifying...' : 'Access Global Portal'}
+            </Button>
           </div>
         </Card>
       </div>
@@ -159,8 +172,8 @@ export default function Login() {
               onKeyDown={e => e.key === 'Enter' && handleLogin()}
             />
             
-            <Button className="w-full mt-5" onClick={handleLogin}>
-              Login
+            <Button className="w-full mt-5" onClick={handleLogin} disabled={isLoading}>
+              {isLoading ? 'Signing in...' : 'Login'}
             </Button>
 
             <div className="mt-5 pt-4 border-t border-slate-100 text-xs text-slate-500">

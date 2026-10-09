@@ -5,6 +5,8 @@ import { Chart as ChartJS, CategoryScale, LinearScale, BarElement, Title, Toolti
 import { useState } from 'react';
 import { useToastStore } from '../store/toast';
 import { isStudentInTeacherClasses } from '../lib/classUtils';
+import { useAnnouncementsSubscription } from '../hooks/useDomainSubscriptions';
+import { Bell, Megaphone, Info } from 'lucide-react';
 
 ChartJS.register(CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend);
 
@@ -16,8 +18,12 @@ function getComponentMax(type: string, config: any) {
 }
 
 export default function DashboardHome() {
-  const { data, currentRole, currentUser, config } = useStore();
+  const { data, currentRole, currentUser, config, schoolId } = useStore();
   
+  // Real-time school announcements listener
+  const roleForAnnouncements = currentRole === 'student' ? 'student' : currentRole === 'teacher' ? 'teacher' : 'admin';
+  const { announcements } = useAnnouncementsSubscription(schoolId, roleForAnnouncements);
+
   const teacher = currentRole === 'teacher' 
     ? data.teachers.find(t => (t.id || '').trim().toLowerCase() === (currentUser?.id || '').trim().toLowerCase()) || (currentUser as any)
     : null;
@@ -57,6 +63,22 @@ export default function DashboardHome() {
   return (
     <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-4 auto-rows-[minmax(140px,auto)]">
       
+      {/* Realtime Announcement Banner if present */}
+      {announcements && announcements.length > 0 && (
+        <div className="col-span-1 md:col-span-3 lg:col-span-4 bg-gradient-to-r from-indigo-50 to-blue-50 border border-indigo-200 rounded-[20px] p-4 flex items-center gap-3">
+          <div className="p-2 bg-indigo-600 text-white rounded-xl flex-shrink-0">
+            <Megaphone className="w-5 h-5" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2">
+              <span className="font-bold text-indigo-950 text-sm">{announcements[0].title}</span>
+              <span className="text-[10px] bg-indigo-200/60 text-indigo-800 font-semibold px-2 py-0.5 rounded-full">Live Notice</span>
+            </div>
+            <p className="text-xs text-indigo-900/80 m-0 truncate mt-0.5">{announcements[0].content}</p>
+          </div>
+        </div>
+      )}
+
       {/* Welcome Widget (spans 2 cols) */}
       <div className="col-span-1 md:col-span-2 bg-slate-900 rounded-[24px] p-6 text-white shadow-sm flex flex-col justify-center relative overflow-hidden">
         <div className="relative z-10">

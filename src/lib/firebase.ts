@@ -1,8 +1,9 @@
 import { initializeApp, getApps, getApp, FirebaseApp } from 'firebase/app';
 import { getAuth, Auth } from 'firebase/auth';
-import { getFirestore, Firestore } from 'firebase/firestore';
+import { getFirestore, Firestore, doc, getDocFromServer } from 'firebase/firestore';
 import { getStorage, FirebaseStorage } from 'firebase/storage';
 import config from '../../firebase-applet-config.json';
+import { initAppCheck } from './appCheck';
 
 // Client Firebase configuration derived from firebase-applet-config.json
 const firebaseConfig = {
@@ -29,4 +30,16 @@ export const db: Firestore = config.firestoreDatabaseId
 // Firebase Storage
 export const storage: FirebaseStorage = getStorage(app);
 
+// Initialize App Check safely
+if (typeof window !== 'undefined') {
+  initAppCheck();
+  // Connection validation
+  getDocFromServer(doc(db, 'test', 'connection')).catch((error) => {
+    if (error instanceof Error && error.message.includes('the client is offline')) {
+      console.warn('Firestore offline status check: check network configuration.');
+    }
+  });
+}
+
 export default app;
+

@@ -1,25 +1,340 @@
 {
   "entities": {
-    "AppState": {
-      "title": "AppState",
-      "description": "Global application state",
+    "GlobalTenant": {
+      "title": "GlobalTenant",
+      "description": "Global school tenant metadata managed by Super Admin",
       "type": "object",
       "properties": {
-        "state": {
-          "type": "object",
-          "description": "The complete AppData object"
-        },
-        "updatedAt": {
-          "type": "string",
-          "format": "date-time"
-        }
+        "id": { "type": "string", "description": "School unique identifier slug" },
+        "name": { "type": "string", "description": "Official school display name" },
+        "status": { "type": "string", "description": "Tenant operational status", "enum": ["active", "suspended"] },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Creation timestamp" },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Last modified timestamp" }
+      },
+      "required": ["id", "name", "status"]
+    },
+    "School": {
+      "title": "School",
+      "description": "School profile and branding configuration",
+      "type": "object",
+      "properties": {
+        "schoolName": { "type": "string", "description": "School display name" },
+        "motto": { "type": "string", "description": "School motto" },
+        "logo": { "type": "string", "description": "URL or base64 of school crest" },
+        "primary": { "type": "string", "description": "Primary brand color hex code" },
+        "secondary": { "type": "string", "description": "Secondary brand color hex code" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Creation timestamp" },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Update timestamp" }
+      },
+      "required": ["schoolName", "primary", "secondary"]
+    },
+    "User": {
+      "title": "User",
+      "description": "User account authorization record associated with Firebase Auth UID",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "Firebase Auth UID" },
+        "schoolId": { "type": "string", "description": "Belonging school identifier" },
+        "username": { "type": "string", "description": "Login identifier or student ID" },
+        "name": { "type": "string", "description": "User full name" },
+        "email": { "type": "string", "description": "User email address" },
+        "role": { "type": "string", "description": "Assigned access control role", "enum": ["student", "teacher", "admin", "superadmin"] },
+        "status": { "type": "string", "description": "Account status", "enum": ["active", "disabled"] },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Creation timestamp" },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Last updated timestamp" }
+      },
+      "required": ["uid", "schoolId", "username", "role"]
+    },
+    "Student": {
+      "title": "Student",
+      "description": "Student profile and academic enrollment details",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Student unique identifier (e.g. STU001)" },
+        "name": { "type": "string", "description": "Student full legal name" },
+        "class": { "type": "string", "description": "Current academic class assignment" },
+        "photo": { "type": "string", "description": "Storage URL of student profile image" },
+        "reportSession": { "type": "string", "description": "Academic session (e.g. 2025/2026)" },
+        "reportTerm": { "type": "string", "description": "Current academic term" },
+        "gender": { "type": "string", "description": "Student gender" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Enrollment date" },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Last updated date" }
+      },
+      "required": ["id", "name", "class"]
+    },
+    "Teacher": {
+      "title": "Teacher",
+      "description": "Faculty member profile and classroom access assignments",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Teacher unique identifier (e.g. teacher1)" },
+        "name": { "type": "string", "description": "Teacher full name" },
+        "email": { "type": "string", "description": "Teacher contact email" },
+        "photo": { "type": "string", "description": "Teacher avatar storage URL" },
+        "classes": { "type": "string", "description": "Serialized or array of authorized class names" },
+        "subjects": { "type": "string", "description": "Serialized or array of taught curriculum subjects" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Account creation date" },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Last updated date" }
+      },
+      "required": ["id", "name"]
+    },
+    "Class": {
+      "title": "Class",
+      "description": "Academic classroom / grade arm definition",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Class identifier (e.g. primary_5)" },
+        "name": { "type": "string", "description": "Display name (e.g. Primary 5)" },
+        "category": { "type": "string", "description": "Curriculum level (Nursery, Primary, Junior Secondary, Senior Secondary)" },
+        "order": { "type": "string", "description": "Numeric sort order" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Creation timestamp" }
+      },
+      "required": ["id", "name"]
+    },
+    "Subject": {
+      "title": "Subject",
+      "description": "Curriculum subject course definition",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Subject identifier slug" },
+        "name": { "type": "string", "description": "Official subject course title" },
+        "code": { "type": "string", "description": "Subject course code (e.g. MTH101)" },
+        "category": { "type": "string", "description": "Department category" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Creation timestamp" }
+      },
+      "required": ["id", "name"]
+    },
+    "QuestionBankItem": {
+      "title": "QuestionBankItem",
+      "description": "Master curriculum reusable question repository item (Teacher/Admin access only)",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique question identifier" },
+        "type": { "type": "string", "description": "Question type", "enum": ["mcq", "fill_blank", "true_false", "diagram"] },
+        "q": { "type": "string", "description": "Question prompt text" },
+        "subject": { "type": "string", "description": "Subject category" },
+        "class": { "type": "string", "description": "Applicable grade or class level" },
+        "topic": { "type": "string", "description": "Curriculum syllabus topic" },
+        "subtopic": { "type": "string", "description": "Detailed subtopic" },
+        "difficulty": { "type": "string", "description": "Question difficulty rating", "enum": ["Easy", "Medium", "Hard"] },
+        "marks": { "type": "string", "description": "Default score weighting" },
+        "status": { "type": "string", "description": "Publication status", "enum": ["active", "draft", "archived"] },
+        "explanation": { "type": "string", "description": "Pedagogical solution explanation" },
+        "image": { "type": "string", "description": "Diagram or illustration storage URL" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Creation timestamp" },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Last update timestamp" }
+      },
+      "required": ["id", "type", "q", "subject", "difficulty"]
+    },
+    "Exam": {
+      "title": "Exam",
+      "description": "Examination specification and sanitized question papers for student distribution",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Exam unique identifier" },
+        "title": { "type": "string", "description": "Exam title" },
+        "subject": { "type": "string", "description": "Academic subject" },
+        "type": { "type": "string", "description": "Assessment component type", "enum": ["CA 1", "CA 2", "Examination"] },
+        "duration": { "type": "string", "description": "Allowed duration in minutes" },
+        "status": { "type": "string", "description": "Availability status", "enum": ["draft", "active", "completed", "archived"] },
+        "targetClasses": { "type": "string", "description": "Eligible target classes list" },
+        "createdBy": { "type": "string", "description": "Author teacher or admin ID" },
+        "totalMarks": { "type": "string", "description": "Total aggregated marks available" },
+        "instructions": { "type": "string", "description": "Candidate exam guidelines" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Creation timestamp" },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Update timestamp" }
+      },
+      "required": ["id", "title", "subject", "type", "duration", "status"]
+    },
+    "ExamKey": {
+      "title": "ExamKey",
+      "description": "Confidential grading answer keys and scoring rubric (Exclusively accessible by Cloud Functions and Admins)",
+      "type": "object",
+      "properties": {
+        "examId": { "type": "string", "description": "Target exam identifier" },
+        "keys": { "type": "string", "description": "Encrypted or serialized question answer keys dictionary" },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Last updated timestamp" }
+      },
+      "required": ["examId", "keys"]
+    },
+    "ExamAttempt": {
+      "title": "ExamAttempt",
+      "description": "Student active test-taking session and autosaved answers",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Attempt unique identifier" },
+        "examId": { "type": "string", "description": "Associated exam ID" },
+        "studentId": { "type": "string", "description": "Candidate student ID" },
+        "schoolId": { "type": "string", "description": "School identifier" },
+        "status": { "type": "string", "description": "Attempt lifecycle status", "enum": ["in_progress", "submitted", "auto_submitted", "abandoned"] },
+        "startTime": { "type": "string", "format": "date-time", "description": "Authoritative session start time" },
+        "expiryTime": { "type": "string", "format": "date-time", "description": "Authoritative deadline cutoff timestamp" },
+        "submittedAt": { "type": "string", "format": "date-time", "description": "Final submission timestamp" },
+        "answers": { "type": "string", "description": "Serialized candidate answers dictionary" },
+        "violationsCount": { "type": "string", "description": "Logged proctoring violation warnings" },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Heartbeat timestamp" }
+      },
+      "required": ["id", "examId", "studentId", "status", "startTime", "expiryTime"]
+    },
+    "ExamResult": {
+      "title": "ExamResult",
+      "description": "Official authoritatively graded candidate result record (Immutable to students)",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Result identifier" },
+        "examId": { "type": "string", "description": "Exam identifier" },
+        "studentId": { "type": "string", "description": "Candidate student ID" },
+        "subject": { "type": "string", "description": "Subject course title" },
+        "type": { "type": "string", "description": "Component type (CA 1, CA 2, Examination)" },
+        "raw": { "type": "string", "description": "Raw points scored" },
+        "rawMax": { "type": "string", "description": "Maximum obtainable raw points" },
+        "scaled": { "type": "string", "description": "Weighted scaled assessment score" },
+        "max": { "type": "string", "description": "Maximum allowable component mark" },
+        "grade": { "type": "string", "description": "Letter grade (A, B, C, D, E, F)" },
+        "remark": { "type": "string", "description": "Performance remark (Excellent, Credit, Pass, Fail)" },
+        "attempt": { "type": "string", "description": "Attempt sequence index" },
+        "submittedAt": { "type": "string", "format": "date-time", "description": "Submission timestamp" },
+        "gradedAt": { "type": "string", "format": "date-time", "description": "Authoritative grading timestamp" }
+      },
+      "required": ["id", "examId", "studentId", "subject", "type", "raw", "rawMax"]
+    },
+    "AttendanceRecord": {
+      "title": "AttendanceRecord",
+      "description": "Classroom student term attendance summary",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Attendance record identifier" },
+        "studentId": { "type": "string", "description": "Student identifier" },
+        "days": { "type": "string", "description": "Total school session days" },
+        "present": { "type": "string", "description": "Days candidate attended" },
+        "absent": { "type": "string", "description": "Days absent" },
+        "percent": { "type": "string", "description": "Percentage attendance" },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Record update timestamp" }
+      },
+      "required": ["id", "studentId", "days", "present", "absent", "percent"]
+    },
+    "SchoolSettings": {
+      "title": "SchoolSettings",
+      "description": "School operational settings, grading rubrics, and proctoring constraints",
+      "type": "object",
+      "properties": {
+        "passmark": { "type": "string", "description": "Standard passing percentage (e.g. 50)" },
+        "ca1": { "type": "string", "description": "Continuous Assessment 1 max marks (e.g. 20)" },
+        "ca2": { "type": "string", "description": "Continuous Assessment 2 max marks (e.g. 20)" },
+        "exam": { "type": "string", "description": "Final examination max marks (e.g. 60)" },
+        "maxAttempts": { "type": "string", "description": "Default max exam attempts allowed" },
+        "violationLimit": { "type": "string", "description": "Anti-cheat tab switch limit before auto-submit" },
+        "allowReview": { "type": "string", "description": "Whether students may review scripts after exam" },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Settings update timestamp" }
       }
+    },
+    "LiveExamSession": {
+      "title": "LiveExamSession",
+      "description": "Real-time candidate proctoring and heartbeat presence state",
+      "type": "object",
+      "properties": {
+        "sessionId": { "type": "string", "description": "Session document identifier" },
+        "schoolId": { "type": "string", "description": "School tenant identifier" },
+        "examId": { "type": "string", "description": "Exam identifier" },
+        "studentId": { "type": "string", "description": "Student candidate identifier" },
+        "studentName": { "type": "string", "description": "Student display name" },
+        "studentClass": { "type": "string", "description": "Student class" },
+        "progressPercent": { "type": "string", "description": "Percentage of questions answered" },
+        "answeredCount": { "type": "string", "description": "Total answered questions" },
+        "totalQuestions": { "type": "string", "description": "Total question count" },
+        "currentQuestionIndex": { "type": "string", "description": "Question currently viewed" },
+        "attemptStatus": { "type": "string", "description": "Current status", "enum": ["not_started", "in_progress", "submitted", "auto_submitted"] },
+        "startTime": { "type": "string", "description": "Start timestamp string" },
+        "expiryTime": { "type": "string", "description": "Expiry timestamp string" },
+        "lastHeartbeat": { "type": "string", "description": "Epoch ms of last received heartbeat" },
+        "violationsCount": { "type": "string", "description": "Current violations detected" },
+        "submissionStatus": { "type": "string", "description": "Submission state", "enum": ["pending", "submitted", "auto_submitted"] },
+        "updatedAt": { "type": "string", "description": "Epoch ms of last state change" }
+      },
+      "required": ["sessionId", "schoolId", "examId", "studentId", "attemptStatus"]
+    },
+    "AuditLog": {
+      "title": "AuditLog",
+      "description": "Append-only immutable system event audit trail",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Audit log identifier" },
+        "schoolId": { "type": "string", "description": "School identifier" },
+        "actorId": { "type": "string", "description": "User who initiated the action" },
+        "actorRole": { "type": "string", "description": "Role of the actor" },
+        "action": { "type": "string", "description": "System event action name" },
+        "targetType": { "type": "string", "description": "Target entity category" },
+        "targetId": { "type": "string", "description": "Target document identifier" },
+        "timestamp": { "type": "string", "format": "date-time", "description": "Event occurrence timestamp" },
+        "details": { "type": "string", "description": "Contextual metadata JSON string" }
+      },
+      "required": ["id", "schoolId", "actorId", "action", "timestamp"]
     }
   },
   "firestore": {
-    "/app_state/global": {
-      "schema": { "$ref": "#/entities/AppState" },
-      "description": "Global application state document"
+    "/globalTenants/{schoolId}": {
+      "schema": { "$ref": "#/entities/GlobalTenant" },
+      "description": "Global school tenant registry for Super Administrator discovery"
+    },
+    "/schools/{schoolId}": {
+      "schema": { "$ref": "#/entities/School" },
+      "description": "School institution profile and branding metadata"
+    },
+    "/schools/{schoolId}/users/{userId}": {
+      "schema": { "$ref": "#/entities/User" },
+      "description": "School user profile and role verification record"
+    },
+    "/schools/{schoolId}/students/{studentId}": {
+      "schema": { "$ref": "#/entities/Student" },
+      "description": "Student candidate enrollment and academic profile"
+    },
+    "/schools/{schoolId}/teachers/{teacherId}": {
+      "schema": { "$ref": "#/entities/Teacher" },
+      "description": "Teacher profile and classroom privileges"
+    },
+    "/schools/{schoolId}/classes/{classId}": {
+      "schema": { "$ref": "#/entities/Class" },
+      "description": "Academic classroom definitions"
+    },
+    "/schools/{schoolId}/subjects/{subjectId}": {
+      "schema": { "$ref": "#/entities/Subject" },
+      "description": "Curriculum course subjects"
+    },
+    "/schools/{schoolId}/questionBanks/{questionId}": {
+      "schema": { "$ref": "#/entities/QuestionBankItem" },
+      "description": "Reusable question bank items (accessible to teachers/admins)"
+    },
+    "/schools/{schoolId}/exams/{examId}": {
+      "schema": { "$ref": "#/entities/Exam" },
+      "description": "Exam definitions and sanitized candidate question papers"
+    },
+    "/schools/{schoolId}/examKeys/{examId}": {
+      "schema": { "$ref": "#/entities/ExamKey" },
+      "description": "Confidential grading answer keys (Cloud Functions and Admin only)"
+    },
+    "/schools/{schoolId}/attempts/{attemptId}": {
+      "schema": { "$ref": "#/entities/ExamAttempt" },
+      "description": "Student active examination sessions and autosaved progress"
+    },
+    "/schools/{schoolId}/results/{resultId}": {
+      "schema": { "$ref": "#/entities/ExamResult" },
+      "description": "Authoritative graded academic assessment results"
+    },
+    "/schools/{schoolId}/attendance/{attendanceId}": {
+      "schema": { "$ref": "#/entities/AttendanceRecord" },
+      "description": "Classroom student term attendance summaries"
+    },
+    "/schools/{schoolId}/settings/{settingId}": {
+      "schema": { "$ref": "#/entities/SchoolSettings" },
+      "description": "Grading rubrics, violation limits, and school configurations"
+    },
+    "/schools/{schoolId}/liveSessions/{sessionId}": {
+      "schema": { "$ref": "#/entities/LiveExamSession" },
+      "description": "Real-time candidate monitoring and connection presence"
+    },
+    "/schools/{schoolId}/auditLogs/{logId}": {
+      "schema": { "$ref": "#/entities/AuditLog" },
+      "description": "Immutable security and administrative audit log events"
     }
   }
 }

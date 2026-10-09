@@ -10,6 +10,8 @@ export interface Tenant {
 export interface UserBase {
   id: string;
   name: string;
+  uid?: string;
+  email?: string;
   password?: string;
 }
 
@@ -106,6 +108,14 @@ export interface Result {
   rawMax: number;
   scaled: number | null;
   max: number | null;
+  percentage?: number;
+  grade?: string;
+  remark?: string;
+  gradingStatus?: 'final' | 'pending_manual';
+  breakdown?: any[];
+  teacherFeedback?: string;
+  finalizedBy?: string;
+  gradedAt?: string;
   violations: number;
   answers: Record<number, any>;
   attempt: number;

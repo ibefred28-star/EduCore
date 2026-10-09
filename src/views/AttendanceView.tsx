@@ -1,11 +1,13 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useStore } from '../store';
 import { useToastStore } from '../store/toast';
 import { Button, Card, Input, Label, Select } from '../components/ui';
 import { isStudentInTeacherClasses } from '../lib/classUtils';
+import { AttendanceRepository } from '../lib/firestore/repositories/attendanceRepository';
+import { useAttendanceSubscription } from '../hooks/useDomainSubscriptions';
 
 export default function AttendanceView() {
-  const { data, updateData, currentUser, currentRole } = useStore();
+  const { data, updateData, currentUser, currentRole, schoolId } = useStore();
   const showToast = useToastStore(s => s.showToast);
 
   const teacher = currentRole === 'teacher' 
@@ -16,6 +18,24 @@ export default function AttendanceView() {
   const students = currentRole === 'teacher' 
     ? data.students.filter(s => isStudentInTeacherClasses(s.class, teacherClasses))
     : data.students;
+
+  // Real-time Firestore subscription for attendance records
+  const teacherPrimaryClass = teacherClasses.length === 1 ? teacherClasses[0] : undefined;
+  const { attendance: liveAttendance } = useAttendanceSubscription(schoolId, teacherPrimaryClass);
+
+  // Merge live attendance data with local state
+  const effectiveAttendance = useMemo(() => {
+    if (liveAttendance && liveAttendance.length > 0) {
+      return liveAttendance.map(a => ({
+        studentId: a.studentId,
+        days: a.days,
+        present: a.present,
+        absent: a.absent,
+        percent: a.percent
+      }));
+    }
+    return data.attendance;
+  }, [liveAttendance, data.attendance]);
   
   const [studentId, setStudentId] = useState(students[0]?.id || '');
   const [days, setDays] = useState(0);
@@ -29,7 +49,7 @@ export default function AttendanceView() {
 
   useEffect(() => {
     if (!studentId) return;
-    const existing = data.attendance.find(a => a.studentId === studentId);
+    const existing = effectiveAttendance.find(a => a.studentId === studentId);
     if (existing) {
       setDays(existing.days);
       setPresent(existing.present);
@@ -37,21 +57,45 @@ export default function AttendanceView() {
       setDays(60);
       setPresent(60);
     }
-  }, [studentId]);
+  }, [studentId, effectiveAttendance]);
 
-  const saveAttendance = () => {
+  const saveAttendance = async () => {
     if (days < 0 || present < 0 || present > days) return showToast('Present days cannot exceed school days');
     
+    const student = students.find(s => s.id === studentId);
+    const percent = days ? Math.round((present / days) * 10000) / 100 : 0;
+    const absent = days - present;
+
+    // 1. Optimistic local update
     updateData(draft => {
       draft.attendance = draft.attendance.filter(x => x.studentId !== studentId);
       draft.attendance.push({
         studentId,
         days,
         present,
-        absent: days - present,
-        percent: days ? Math.round((present / days) * 10000) / 100 : 0
+        absent,
+        percent
       });
     });
+
+    // 2. Persist to Firestore Attendance Repository if schoolId is configured
+    if (schoolId) {
+      try {
+        await AttendanceRepository.upsertAttendance(schoolId, {
+          id: studentId,
+          schoolId,
+          studentId,
+          class: student?.class || '',
+          days,
+          present,
+          absent,
+          percent
+        });
+      } catch (err) {
+        console.warn('Could not persist attendance to Firestore:', err);
+      }
+    }
+
     showToast('Attendance saved');
   };
 
@@ -120,7 +164,7 @@ export default function AttendanceView() {
             </tr>
           </thead>
           <tbody>
-            {data.attendance.filter(a => students.some(s => s.id === a.studentId)).map(a => {
+            {effectiveAttendance.filter(a => students.some(s => s.id === a.studentId)).map(a => {
               const s = students.find(x => x.id === a.studentId);
               return (
                 <tr key={a.studentId} className="border-b border-slate-200 last:border-0 hover:bg-slate-50">
