@@ -27,6 +27,14 @@ export interface Student extends UserBase {
   principalComment?: string;
   teacherSignature?: string;
   principalSignature?: string;
+  ca1TeacherComment?: string;
+  ca1PrincipalComment?: string;
+  ca1Position?: string;
+  ca2TeacherComment?: string;
+  ca2PrincipalComment?: string;
+  ca2Position?: string;
+  aflTeacherComment?: string;
+  aflPrincipalComment?: string;
 }
 
 export interface Teacher extends UserBase {

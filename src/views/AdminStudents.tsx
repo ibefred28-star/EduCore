@@ -3,8 +3,10 @@ import { useStore } from '../store';
 import { useToastStore } from '../store/toast';
 import { Button, Input, Label, Modal, Select } from '../components/ui';
 import { CLASS_OPTIONS } from '../constants';
-import { UserService } from '../lib/auth/userService';
+import { StudentRepository } from '../lib/firestore/repositories/studentRepository';
+import { AdminProvisioningService } from '../lib/auth/adminProvisioningService';
 import { useStudentsSubscription } from '../hooks/useDomainSubscriptions';
+import { KeyRound, RefreshCw, UserCheck, ShieldCheck } from 'lucide-react';
 
 export default function AdminStudents() {
   const { data, updateData, schoolId } = useStore();
@@ -19,40 +21,55 @@ export default function AdminStudents() {
         id: s.id,
         name: s.name,
         class: s.class,
-        photo: s.photo || '',
-        password: (data.students.find(x => x.id === s.id)?.password) || 'pass'
+        photo: s.photo || ''
       }));
     }
-    return data.students;
+    return data.students.map(s => ({
+      id: s.id,
+      name: s.name,
+      class: s.class,
+      photo: s.photo || ''
+    }));
   }, [liveStudents, data.students]);
   
   const [isOpen, setIsOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
+  const [isProvisioning, setIsProvisioning] = useState(false);
+  const [isSyncingAll, setIsSyncingAll] = useState(false);
   
   const [formData, setFormData] = useState({ id: '', name: '', class: 'Primary 5', password: '', photo: '' });
+  const [resetModal, setResetModal] = useState({ isOpen: false, studentId: '', studentName: '', newPassword: '' });
 
   const openForm = (id?: string) => {
     if (id) {
       const s = displayStudents.find(x => x.id === id);
-      if (s) setFormData({ id: s.id, name: s.name, class: s.class, password: s.password || '', photo: s.photo || '' });
+      if (s) setFormData({ id: s.id, name: s.name, class: s.class, password: '', photo: s.photo || '' });
     } else {
-      setFormData({ id: 'STU' + Date.now(), name: '', class: 'Primary 5', password: 'pass', photo: '' });
+      setFormData({ id: 'STU' + Date.now().toString().slice(-4), name: '', class: 'Primary 5', password: 'student123', photo: '' });
     }
     setEditingId(id || null);
     setIsOpen(true);
   };
 
-  const saveStudent = () => {
+  const saveStudent = async () => {
     const trimmedId = formData.id.trim();
     const trimmedName = formData.name.trim();
     if (!trimmedId || !trimmedName) return showToast('ID and Name are required');
     
+    const trimmedPass = (formData.password || '').trim();
+    if (!editingId && (!trimmedPass || trimmedPass.length < 6)) {
+      return showToast('Password must be at least 6 characters long for login');
+    }
+    if (editingId && trimmedPass && trimmedPass.length < 6) {
+      return showToast('Password must be at least 6 characters long');
+    }
+
     const cleanStudent = {
-      ...formData,
       id: trimmedId,
       name: trimmedName,
-      class: (formData.class || '').trim() || 'Primary 5'
+      class: (formData.class || '').trim() || 'Primary 5',
+      photo: formData.photo || ''
     };
 
     if (!editingId) {
@@ -67,28 +84,89 @@ export default function AdminStudents() {
       }
     }
 
-    updateData(draft => {
-      if (editingId) {
-        const i = draft.students.findIndex(x => x.id === editingId);
-        if (i >= 0) draft.students[i] = { ...draft.students[i], ...cleanStudent };
-      } else {
-        draft.students.push(cleanStudent);
+    setIsProvisioning(true);
+    try {
+      // 1. Authoritatively provision the student's authentication account via server-side API
+      const provRes = await AdminProvisioningService.provisionStudent({
+        schoolId: schoolId || 'default',
+        studentId: cleanStudent.id,
+        studentName: cleanStudent.name,
+        studentClass: cleanStudent.class,
+        password: trimmedPass || 'student123',
+        photo: cleanStudent.photo
+      });
+
+      if (!provRes.success) {
+        showToast(provRes.error || 'Failed to provision student login account in Firebase Authentication');
+        setIsProvisioning(false);
+        return;
       }
-    });
 
-    // Establish authoritative user profile in Firestore
-    UserService.upsertUserProfile(schoolId || 'global', {
-      uid: 'pending_' + cleanStudent.id,
-      username: cleanStudent.id,
-      name: cleanStudent.name,
-      email: `${schoolId || 'school'}.student.${cleanStudent.id}@educore.internal`,
-      role: 'student',
-      classes: [cleanStudent.class],
-      status: 'active'
-    }).catch(console.warn);
+      // 2. Persist in local and remote roster (WITHOUT storing plaintext password!)
+      updateData(draft => {
+        if (editingId) {
+          const i = draft.students.findIndex(x => x.id === editingId);
+          if (i >= 0) draft.students[i] = { ...draft.students[i], ...cleanStudent };
+        } else {
+          draft.students.push(cleanStudent);
+        }
+      });
 
-    showToast('Student saved');
-    setIsOpen(false);
+      // 3. Persist in Firestore Student repository
+      if (schoolId) {
+        StudentRepository.upsertStudent(schoolId, cleanStudent).catch(console.warn);
+      }
+
+      showToast(editingId ? 'Student updated and credentials synchronized' : 'Student account created and credentials ready');
+      setIsOpen(false);
+    } catch (err: any) {
+      showToast(err.message || 'Error saving student');
+    } finally {
+      setIsProvisioning(false);
+    }
+  };
+
+  const handleResetPassword = async () => {
+    if (!resetModal.studentId || !resetModal.newPassword) {
+      return showToast('Please enter a new password');
+    }
+    if (resetModal.newPassword.trim().length < 6) {
+      return showToast('Password must be at least 6 characters long');
+    }
+
+    try {
+      const res = await AdminProvisioningService.resetStudentPassword({
+        schoolId: schoolId || 'default',
+        studentId: resetModal.studentId,
+        newPassword: resetModal.newPassword.trim()
+      });
+
+      if (res.success) {
+        showToast(`Password for ${resetModal.studentName} updated successfully`);
+        setResetModal({ isOpen: false, studentId: '', studentName: '', newPassword: '' });
+      } else {
+        showToast(res.error || 'Failed to reset password');
+      }
+    } catch (err: any) {
+      showToast(err.message || 'Error resetting password');
+    }
+  };
+
+  const handleSyncAllStudents = async () => {
+    if (!displayStudents.length) return showToast('No students to sync');
+    setIsSyncingAll(true);
+    try {
+      const res = await AdminProvisioningService.syncAllStudents(schoolId || 'default', displayStudents);
+      if (res.success) {
+        showToast(`Successfully provisioned ${res.count} student accounts in Firebase Auth`);
+      } else {
+        showToast(res.error || 'Failed to sync students to Firebase Auth');
+      }
+    } catch (err: any) {
+      showToast(err.message || 'Sync error');
+    } finally {
+      setIsSyncingAll(false);
+    }
   };
 
   const confirmDelete = () => {
@@ -98,6 +176,9 @@ export default function AdminStudents() {
       draft.results = draft.results.filter(r => r.studentId !== deleteConfirm);
       draft.attendance = draft.attendance.filter(a => a.studentId !== deleteConfirm);
     });
+    if (schoolId) {
+      StudentRepository.deleteStudent(schoolId, deleteConfirm).catch(console.warn);
+    }
     showToast('Student deleted');
     setDeleteConfirm(null);
   };
@@ -113,8 +194,19 @@ export default function AdminStudents() {
 
   return (
     <>
-      <div className="flex gap-2 flex-wrap mb-4">
-        <Button onClick={() => openForm()}>+ Add Student</Button>
+      <div className="flex gap-2 flex-wrap mb-4 justify-between items-center">
+        <Button onClick={() => openForm()} className="inline-flex items-center gap-1.5">
+          + Add Student
+        </Button>
+        <Button
+          variant="secondary"
+          onClick={handleSyncAllStudents}
+          disabled={isSyncingAll}
+          className="inline-flex items-center gap-1.5 text-xs"
+        >
+          <RefreshCw className={`w-3.5 h-3.5 ${isSyncingAll ? 'animate-spin' : ''}`} />
+          {isSyncingAll ? 'Syncing with Auth...' : 'Sync All to Firebase Auth'}
+        </Button>
       </div>
       
       <div className="overflow-x-auto bg-white rounded-lg shadow border border-slate-200">
@@ -122,9 +214,10 @@ export default function AdminStudents() {
           <thead>
             <tr className="bg-slate-50 border-b border-slate-200 text-left">
               <th className="p-3 font-semibold w-12">Photo</th>
-              <th className="p-3 font-semibold">ID</th>
+              <th className="p-3 font-semibold">Admission / ID</th>
               <th className="p-3 font-semibold">Name</th>
               <th className="p-3 font-semibold">Class</th>
+              <th className="p-3 font-semibold">Auth Status</th>
               <th className="p-3 font-semibold">Actions</th>
             </tr>
           </thead>
@@ -134,15 +227,29 @@ export default function AdminStudents() {
                 <td className="p-3">
                   {s.photo ? <img src={s.photo} alt={s.name} className="w-8 h-8 rounded-full object-cover" /> : <div className="w-8 h-8 rounded-full bg-slate-200 flex items-center justify-center text-xs">{s.name.charAt(0)}</div>}
                 </td>
-                <td className="p-3 font-mono text-sm">{s.id}</td>
+                <td className="p-3 font-mono text-sm font-semibold text-slate-800">{s.id}</td>
                 <td className="p-3 font-medium">{s.name}</td>
                 <td className="p-3">
                   <span className="inline-block px-2.5 py-0.5 rounded-full text-xs font-semibold bg-indigo-50 text-indigo-700 border border-indigo-100">
                     {s.class}
                   </span>
                 </td>
-                <td className="p-3 flex items-center gap-2">
-                  <Button variant="secondary" onClick={() => openForm(s.id)}>Edit</Button>
+                <td className="p-3">
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                    <ShieldCheck className="w-3 h-3 text-emerald-600" /> Active Auth
+                  </span>
+                </td>
+                <td className="p-3 flex items-center gap-1.5 flex-wrap">
+                  <Button variant="secondary" onClick={() => openForm(s.id)} className="text-xs py-1 px-2.5">
+                    Edit
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    onClick={() => setResetModal({ isOpen: true, studentId: s.id, studentName: s.name, newPassword: '' })}
+                    className="text-xs py-1 px-2.5 inline-flex items-center gap-1 text-slate-700"
+                  >
+                    <KeyRound className="w-3 h-3" /> Reset Pass
+                  </Button>
                   <button
                     onClick={() => setDeleteConfirm(s.id)}
                     className="text-xs text-rose-600 hover:text-rose-800 hover:bg-rose-50 px-2 py-1.5 rounded transition-colors font-medium cursor-pointer"
@@ -154,7 +261,7 @@ export default function AdminStudents() {
             ))}
             {displayStudents.length === 0 && (
               <tr>
-                <td colSpan={5} className="p-8 text-center text-slate-500">
+                <td colSpan={6} className="p-8 text-center text-slate-500">
                   No students registered yet. Click &quot;+ Add Student&quot; to register students.
                 </td>
               </tr>
@@ -193,15 +300,42 @@ export default function AdminStudents() {
           onChange={e => setFormData(p => ({ ...p, class: e.target.value }))} 
         />
         
-        <Label>Password</Label>
-        <Input value={formData.password} onChange={e => setFormData(p => ({ ...p, password: e.target.value }))} />
+        <Label>{editingId ? 'New Password (leave blank to keep current)' : 'Password (min 6 characters)'}</Label>
+        <Input 
+          type="password"
+          placeholder={editingId ? 'Leave blank or enter new password' : 'At least 6 characters'}
+          value={formData.password} 
+          onChange={e => setFormData(p => ({ ...p, password: e.target.value }))} 
+        />
         
         <Label>Photo</Label>
         <Input type="file" accept="image/*" onChange={handlePhoto} />
         
         <div className="flex gap-2 mt-5">
-          <Button onClick={saveStudent}>Save Student</Button>
+          <Button disabled={isProvisioning} onClick={saveStudent}>
+            {isProvisioning ? 'Provisioning with Firebase Auth...' : 'Save Student'}
+          </Button>
           <Button variant="secondary" onClick={() => setIsOpen(false)}>Cancel</Button>
+        </div>
+      </Modal>
+
+      {/* Reset Password Modal */}
+      <Modal isOpen={resetModal.isOpen} onClose={() => setResetModal(p => ({ ...p, isOpen: false }))}>
+        <h2 className="text-xl font-bold mt-0 flex items-center gap-2">
+          <KeyRound className="w-5 h-5 text-indigo-600" /> Reset Student Password
+        </h2>
+        <p className="text-sm text-slate-500 mb-4">
+          Provision a new login password for <strong className="text-slate-800">{resetModal.studentName}</strong> (ID: {resetModal.studentId}).
+        </p>
+        <Label>New Password (min 6 characters)</Label>
+        <Input
+          placeholder="e.g. newpass123"
+          value={resetModal.newPassword}
+          onChange={e => setResetModal(p => ({ ...p, newPassword: e.target.value }))}
+        />
+        <div className="flex gap-2 mt-5">
+          <Button onClick={handleResetPassword}>Save & Update Password</Button>
+          <Button variant="secondary" onClick={() => setResetModal(p => ({ ...p, isOpen: false }))}>Cancel</Button>
         </div>
       </Modal>
 

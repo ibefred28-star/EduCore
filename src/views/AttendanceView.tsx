@@ -89,7 +89,8 @@ export default function AttendanceView() {
           days,
           present,
           absent,
-          percent
+          percent,
+          updatedAt: new Date().toISOString()
         });
       } catch (err) {
         console.warn('Could not persist attendance to Firestore:', err);

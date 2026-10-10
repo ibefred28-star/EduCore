@@ -121,5 +121,26 @@ export const AttemptRepository = {
     }, (error) => {
       console.warn('AttemptRepository.subscribeExamAttempts error:', error);
     });
+  },
+
+  /**
+   * Realtime listener for a candidate's individual attempt session
+   */
+  subscribeAttempt(
+    schoolId: string,
+    attemptId: string,
+    callback: (attempt: FirestoreAttemptDoc | null) => void
+  ): Unsubscribe {
+    if (!schoolId || !attemptId) return () => {};
+    const ref = doc(db, FirestorePaths.attempt(schoolId, attemptId));
+    return onSnapshot(ref, (snap) => {
+      if (snap.exists()) {
+        callback(snap.data() as FirestoreAttemptDoc);
+      } else {
+        callback(null);
+      }
+    }, (error) => {
+      console.warn('AttemptRepository.subscribeAttempt error:', error);
+    });
   }
 };

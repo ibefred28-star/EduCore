@@ -12,6 +12,11 @@ import {
   completeStudentLiveSession
 } from '../lib/liveExamService';
 import {
+  useExamsSubscription,
+  useExamAttemptsSubscription
+} from '../hooks/useDomainSubscriptions';
+import { FirestoreAttemptDoc } from '../lib/firestore/models';
+import {
   Activity,
   Radio,
   Wifi,
@@ -28,12 +33,17 @@ import {
   Sparkles,
   ShieldAlert,
   ArrowRight,
+  Check,
+  FileCheck,
   X
 } from 'lucide-react';
 
 export default function LiveExamMonitoring() {
   const { data, currentRole, currentUser, schoolId } = useStore();
   const showToast = useToastStore(s => s.showToast);
+
+  // Live exams subscription
+  const { exams: liveExams } = useExamsSubscription(schoolId);
 
   // Teacher class boundary
   const teacher = currentRole === 'teacher'
@@ -43,7 +53,7 @@ export default function LiveExamMonitoring() {
 
   // Filter exams available to this user
   const availableExams = useMemo(() => {
-    let list = data.exams || [];
+    let list = (liveExams && liveExams.length > 0) ? (liveExams as Exam[]) : (data.exams || []);
     if (currentRole === 'teacher') {
       list = list.filter(e => {
         if (e.targetClasses && e.targetClasses.length > 0) {
@@ -53,7 +63,7 @@ export default function LiveExamMonitoring() {
       });
     }
     return list;
-  }, [data.exams, currentRole, currentUser, teacherClasses]);
+  }, [liveExams, data.exams, currentRole, currentUser, teacherClasses]);
 
   // Active exams first, or any exam
   const activeExams = useMemo(() => {
@@ -82,10 +92,13 @@ export default function LiveExamMonitoring() {
 
   // Live sessions received in real time from Firestore listener
   const [liveSessions, setLiveSessions] = useState<LiveStudentSession[]>([]);
-  // Local time state to refresh connection presence every 5 seconds without database reads
+  // Local time state to refresh connection presence and remaining time every 5 seconds without database reads
   const [nowTime, setNowTime] = useState<number>(Date.now());
 
-  // Subscribe to real-time Firestore listener for selected exam
+  // Real-time authoritative attempts subscription for the selected exam
+  const { attempts: liveAttempts } = useExamAttemptsSubscription(schoolId, selectedExamId);
+
+  // Subscribe to real-time Firestore listener for selected exam proctoring
   useEffect(() => {
     if (!selectedExamId) {
       setLiveSessions([]);
@@ -128,15 +141,19 @@ export default function LiveExamMonitoring() {
     return list;
   }, [selectedExam, data.students, currentRole, teacherClasses]);
 
-  // Map of student live states
+  // Map of student live states combining proctoring sessions and authoritative Firestore attempts
   const combinedStudentStates = useMemo(() => {
     const sessionMap = new Map<string, LiveStudentSession>();
     liveSessions.forEach(s => sessionMap.set(s.studentId, s));
+
+    const attemptMap = new Map<string, FirestoreAttemptDoc>();
+    liveAttempts.forEach(a => attemptMap.set(a.studentId, a));
 
     const totalQuestions = selectedExam?.questions?.length || 0;
 
     return eligibleStudents.map(student => {
       const live = sessionMap.get(student.id);
+      const attempt = attemptMap.get(student.id);
 
       // Check if student has submitted in local app results
       const localResult = data.results.find(
@@ -153,6 +170,10 @@ export default function LiveExamMonitoring() {
       let lastHeartbeat = 0;
       let violationsCount = 0;
       let submittedAt: string | undefined = undefined;
+      let answersSynced = false;
+      let gradingStatus: 'pending' | 'in_progress' | 'graded' = 'pending';
+      let finalScore: number | undefined = undefined;
+      let finalPercentage: number | undefined = undefined;
 
       if (localResult) {
         attemptStatus = 'submitted';
@@ -161,6 +182,23 @@ export default function LiveExamMonitoring() {
         answeredCount = localResult.rawMax || totalQuestions;
         violationsCount = localResult.violations || 0;
         submittedAt = localResult.submittedAt;
+        answersSynced = true;
+        gradingStatus = 'graded';
+        finalScore = localResult.raw;
+        finalPercentage = localResult.percentage;
+      } else if (attempt) {
+        attemptStatus = attempt.status === 'abandoned' ? 'not_started' : attempt.status;
+        submissionStatus = (attempt.status === 'submitted' || attempt.status === 'auto_submitted') ? attempt.status : 'pending';
+        answeredCount = attempt.answers ? Object.keys(attempt.answers).length : (live?.answeredCount || 0);
+        progressPercent = totalQuestions > 0 ? Math.min(100, Math.round((answeredCount / totalQuestions) * 100)) : 0;
+        currentQuestionIndex = attempt.currentQuestionIndex || 0;
+        startTime = attempt.startTime || attempt.startedAt || live?.startTime || '';
+        expiryTime = attempt.expiryTime || live?.expiryTime || '';
+        lastHeartbeat = attempt.lastHeartbeat || live?.lastHeartbeat || 0;
+        violationsCount = attempt.violationsCount || live?.violationsCount || 0;
+        submittedAt = attempt.submittedAt || live?.submittedAt;
+        answersSynced = !!attempt.answers && Object.keys(attempt.answers).length > 0;
+        gradingStatus = attempt.gradingStatus || ((attempt.status === 'submitted' || attempt.status === 'auto_submitted') ? 'graded' : 'in_progress');
       } else if (live) {
         attemptStatus = live.attemptStatus || 'in_progress';
         submissionStatus = live.submissionStatus || 'pending';
@@ -172,6 +210,8 @@ export default function LiveExamMonitoring() {
         lastHeartbeat = live.lastHeartbeat || 0;
         violationsCount = live.violationsCount || 0;
         submittedAt = live.submittedAt;
+        answersSynced = live.answeredCount > 0;
+        gradingStatus = (live.attemptStatus === 'submitted' || live.attemptStatus === 'auto_submitted') ? 'graded' : 'in_progress';
       }
 
       const sessionObj: LiveStudentSession = {
@@ -192,7 +232,11 @@ export default function LiveExamMonitoring() {
         violationsCount,
         submissionStatus,
         submittedAt,
-        updatedAt: live ? live.updatedAt : 0
+        updatedAt: live ? live.updatedAt : (attempt ? new Date(attempt.updatedAt).getTime() : 0),
+        answersSynced,
+        gradingStatus,
+        finalScore,
+        finalPercentage
       };
 
       const conn = computeConnectionStatus(sessionObj, nowTime);
@@ -201,7 +245,7 @@ export default function LiveExamMonitoring() {
         connectionStatus: conn
       };
     });
-  }, [eligibleStudents, liveSessions, selectedExam, data.results, schoolId, nowTime]);
+  }, [eligibleStudents, liveSessions, liveAttempts, selectedExam, data.results, schoolId, nowTime]);
 
   // Overall Exam Real-Time Metrics
   const examMetrics = useMemo(() => {
@@ -595,7 +639,50 @@ export default function LiveExamMonitoring() {
                             {student.startTime ? new Date(student.startTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—'}
                           </span>
                         </div>
+
+                        <div>
+                          <span className="block text-[10px] uppercase text-slate-400">Answers Synced:</span>
+                          <span className="font-semibold text-slate-700 inline-flex items-center gap-1">
+                            {student.answersSynced ? (
+                              <span className="text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded text-[11px] font-bold border border-emerald-200 inline-flex items-center gap-0.5">
+                                <Check className="w-3 h-3 text-emerald-600" /> Synced ({student.answeredCount})
+                              </span>
+                            ) : (
+                              <span className="text-slate-400 font-normal">Pending ({student.answeredCount})</span>
+                            )}
+                          </span>
+                        </div>
+
+                        <div>
+                          <span className="block text-[10px] uppercase text-slate-400">Time Remaining:</span>
+                          <span className="font-semibold text-slate-700">
+                            {student.expiryTime && (student.attemptStatus === 'in_progress') ? (() => {
+                              const sec = Math.max(0, Math.floor((new Date(student.expiryTime).getTime() - nowTime) / 1000));
+                              const m = Math.floor(sec / 60);
+                              const s = sec % 60;
+                              return `${m}m ${s < 10 ? '0' : ''}${s}s`;
+                            })() : (student.attemptStatus === 'submitted' || student.attemptStatus === 'auto_submitted') ? (
+                              <span className="text-blue-600 font-medium">Submitted</span>
+                            ) : '—'}
+                          </span>
+                        </div>
                       </div>
+
+                      {/* Grading Status & Results Pill if available */}
+                      {student.gradingStatus && (
+                        <div className="flex items-center justify-between text-xs py-1.5 px-2 bg-slate-50 rounded-lg border border-slate-100">
+                          <span className="text-[10px] uppercase text-slate-400 font-bold">Grading Status:</span>
+                          {student.gradingStatus === 'graded' ? (
+                            <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700">
+                              <FileCheck className="w-3 h-3 text-emerald-600" /> Graded {student.finalScore !== undefined ? `(${student.finalScore} pts · ${student.finalPercentage}%)` : ''}
+                            </span>
+                          ) : student.gradingStatus === 'in_progress' ? (
+                            <span className="text-[11px] font-semibold text-amber-700">Grading / Processing</span>
+                          ) : (
+                            <span className="text-[11px] text-slate-500">Pending</span>
+                          )}
+                        </div>
+                      )}
 
                       {/* Anti-cheat Violations Indicator */}
                       {hasViolations && (
@@ -710,13 +797,59 @@ export default function LiveExamMonitoring() {
                 <span className="font-bold text-slate-800 text-sm">
                   {inspectStudent.startTime ? new Date(inspectStudent.startTime).toLocaleTimeString() : 'Not Started'}
                 </span>
+                <span className="text-slate-400 block text-[11px] mt-0.5">
+                  {inspectStudent.submittedAt ? `Submitted: ${new Date(inspectStudent.submittedAt).toLocaleTimeString()}` : 'In progress'}
+                </span>
               </div>
 
               <div className="p-3 bg-white border border-slate-200 rounded-xl">
-                <span className="text-slate-400 block mb-0.5 uppercase text-[10px] font-bold">Session Expiry Time:</span>
+                <span className="text-slate-400 block mb-0.5 uppercase text-[10px] font-bold">Authoritative Time Remaining:</span>
                 <span className="font-bold text-slate-800 text-sm">
-                  {inspectStudent.expiryTime ? new Date(inspectStudent.expiryTime).toLocaleTimeString() : '—'}
+                  {inspectStudent.expiryTime && inspectStudent.attemptStatus === 'in_progress' ? (() => {
+                    const sec = Math.max(0, Math.floor((new Date(inspectStudent.expiryTime).getTime() - nowTime) / 1000));
+                    const m = Math.floor(sec / 60);
+                    const s = sec % 60;
+                    return `${m}m ${s < 10 ? '0' : ''}${s}s remaining`;
+                  })() : inspectStudent.attemptStatus === 'submitted' || inspectStudent.attemptStatus === 'auto_submitted' ? (
+                    'Submitted'
+                  ) : '—'}
                 </span>
+                <span className="text-slate-400 block text-[11px] mt-0.5">
+                  Expiry: {inspectStudent.expiryTime ? new Date(inspectStudent.expiryTime).toLocaleTimeString() : '—'}
+                </span>
+              </div>
+
+              <div className="p-3 bg-white border border-slate-200 rounded-xl">
+                <span className="text-slate-400 block mb-0.5 uppercase text-[10px] font-bold">Answers Synchronization:</span>
+                <div className="flex items-center gap-1.5 mt-1">
+                  {inspectStudent.answersSynced ? (
+                    <span className="inline-flex items-center gap-1 text-emerald-700 font-bold bg-emerald-50 px-2 py-0.5 rounded text-xs border border-emerald-200">
+                      <Check className="w-3.5 h-3.5 text-emerald-600" /> Answers Synced
+                    </span>
+                  ) : (
+                    <span className="text-slate-500 text-xs">Awaiting client push</span>
+                  )}
+                </div>
+                <span className="text-slate-500 block text-[11px] mt-1">
+                  {inspectStudent.answeredCount} answers recorded in attempt
+                </span>
+              </div>
+
+              <div className="p-3 bg-white border border-slate-200 rounded-xl">
+                <span className="text-slate-400 block mb-0.5 uppercase text-[10px] font-bold">Grading & Result Status:</span>
+                <div className="mt-1">
+                  {inspectStudent.gradingStatus === 'graded' ? (
+                    <span className="inline-flex items-center gap-1 text-blue-700 font-bold bg-blue-50 px-2 py-0.5 rounded text-xs border border-blue-200">
+                      <FileCheck className="w-3.5 h-3.5 text-blue-600" /> Graded {inspectStudent.finalScore !== undefined ? `(${inspectStudent.finalScore} pts · ${inspectStudent.finalPercentage}%)` : ''}
+                    </span>
+                  ) : inspectStudent.gradingStatus === 'in_progress' ? (
+                    <span className="inline-flex items-center gap-1 text-amber-700 font-semibold bg-amber-50 px-2 py-0.5 rounded text-xs border border-amber-200">
+                      Grading In Progress
+                    </span>
+                  ) : (
+                    <span className="text-slate-400 text-xs">Pending Submission</span>
+                  )}
+                </div>
               </div>
             </div>
 

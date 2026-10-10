@@ -32,6 +32,10 @@ export interface LiveStudentSession {
   submittedAt?: string;
   updatedAt: number;
   connectionStatus?: LiveConnectionStatus;
+  answersSynced?: boolean;
+  gradingStatus?: 'pending' | 'in_progress' | 'graded';
+  finalScore?: number;
+  finalPercentage?: number;
 }
 
 export function getLiveSessionDocId(

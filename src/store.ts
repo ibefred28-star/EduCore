@@ -420,6 +420,18 @@ export const useStore = create<StoreState>((set, get) => {
                   set({ currentUser: updatedT });
                   localStorage.setItem(`educore_current_user_${state.schoolId}`, JSON.stringify(updatedT));
                 }
+              } else if (cur && get().currentRole === 'student') {
+                const updatedS = sanitized.students?.find((s: any) => (s.id || '').trim().toLowerCase() === (cur.id || '').trim().toLowerCase());
+                if (updatedS) {
+                  const updatedUser = {
+                    ...cur,
+                    name: updatedS.name || cur.name,
+                    class: updatedS.class || (cur as any).class || 'Primary 5',
+                    photo: updatedS.photo || (cur as any).photo || ''
+                  };
+                  set({ currentUser: updatedUser });
+                  localStorage.setItem(`educore_current_user_${state.schoolId}`, JSON.stringify(updatedUser));
+                }
               }
             }
             if (serverData.branding) {
@@ -472,6 +484,18 @@ export const useStore = create<StoreState>((set, get) => {
                 if (updatedT) {
                   set({ currentUser: updatedT });
                   localStorage.setItem(`educore_current_user_${state.schoolId}`, JSON.stringify(updatedT));
+                }
+              } else if (cur && get().currentRole === 'student') {
+                const updatedS = sanitized.students?.find((s: any) => (s.id || '').trim().toLowerCase() === (cur.id || '').trim().toLowerCase());
+                if (updatedS) {
+                  const updatedUser = {
+                    ...cur,
+                    name: updatedS.name || cur.name,
+                    class: updatedS.class || (cur as any).class || 'Primary 5',
+                    photo: updatedS.photo || (cur as any).photo || ''
+                  };
+                  set({ currentUser: updatedUser });
+                  localStorage.setItem(`educore_current_user_${state.schoolId}`, JSON.stringify(updatedUser));
                 }
               }
             }

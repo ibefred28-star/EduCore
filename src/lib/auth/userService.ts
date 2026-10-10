@@ -12,8 +12,34 @@ export const UserService = {
     const cleanSchool = schoolId || 'global';
     const userRef = doc(db, FirestorePaths.user(cleanSchool, username));
     const snap = await getDoc(userRef);
-    if (!snap.exists()) return null;
-    return snap.data() as FirestoreUserDoc;
+    if (snap.exists()) {
+      return snap.data() as FirestoreUserDoc;
+    }
+
+    // Fallback: If student was created in the school roster, reconcile profile
+    try {
+      const studentRef = doc(db, FirestorePaths.student(cleanSchool, username));
+      const studentSnap = await getDoc(studentRef);
+      if (studentSnap.exists()) {
+        const sData = studentSnap.data();
+        return {
+          uid: sData.uid || '',
+          schoolId: cleanSchool,
+          username: (sData.id || username).toLowerCase(),
+          name: sData.name || username,
+          email: `${cleanSchool}.student.${username.toLowerCase()}@educore.internal`,
+          role: 'student',
+          classes: sData.class ? [sData.class] : ['Primary 5'],
+          status: 'active',
+          createdAt: sData.createdAt || new Date().toISOString(),
+          updatedAt: sData.updatedAt || new Date().toISOString()
+        };
+      }
+    } catch (e) {
+      // Ignore permission or network errors in fallback
+    }
+
+    return null;
   },
 
   /**

@@ -150,6 +150,35 @@ export default function CBT() {
     };
   }, [exam?.id, currentUser?.id, schoolId]);
 
+  // 1b. Realtime sync with candidate's server-authoritative attempt document
+  useEffect(() => {
+    if (!schoolId || !attemptId) return;
+
+    const unsub = AttemptRepository.subscribeAttempt(schoolId, attemptId, (doc) => {
+      if (!doc) return;
+
+      // Authoritative status change (e.g. server auto-submitted or teacher finalized)
+      if ((doc.status === 'submitted' || doc.status === 'auto_submitted') && (lifecycleState === 'in_progress' || lifecycleState === 'created')) {
+        clearInterval(timerRef.current);
+        clearInterval(heartbeatTimerRef.current);
+        clearTimeout(autosaveTimeoutRef.current);
+        setLifecycleState(doc.status);
+        showToast('Exam attempt has been finalized and recorded.');
+      }
+
+      // Authoritative expiry time update
+      if (doc.expiryTime && doc.expiryTime !== expiryTimeRef.current) {
+        expiryTimeRef.current = doc.expiryTime;
+        const remaining = CbtEngine.calculateTimeRemaining(doc.expiryTime);
+        setTimeLeft(remaining);
+      }
+    });
+
+    return () => {
+      unsub();
+    };
+  }, [schoolId, attemptId, lifecycleState, showToast]);
+
   // 2. Debounced Autosave & Live Progress Sync
   const triggerAutosave = useCallback((currentAnswers: Record<number, any>, currQIndex: number) => {
     if (!attemptId || !schoolId || lifecycleState !== 'in_progress') return;

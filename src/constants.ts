@@ -121,7 +121,23 @@ export const DEFAULT_DATA: AppData = {
     { id: 'RES13', studentId: 'STU002', examId: 'EXAM_SCI1', subject: 'Basic Science', type: 'CA 1', raw: 1, rawMax: 2, scaled: 14, max: 20, violations: 0, answers: { 0: 1, 1: 2 }, attempt: 1, attemptsAllowed: 1, submittedAt: '2026-09-26T11:15:00Z' },
     { id: 'RES14', studentId: 'STU003', examId: 'EXAM_SCI1', subject: 'Basic Science', type: 'CA 1', raw: 2, rawMax: 2, scaled: 20, max: 20, violations: 0, answers: { 0: 0, 1: 2 }, attempt: 1, attemptsAllowed: 1, submittedAt: '2026-09-26T11:15:00Z' },
     { id: 'RES15', studentId: 'STU004', examId: 'EXAM_SCI1', subject: 'Basic Science', type: 'CA 1', raw: 1, rawMax: 2, scaled: 9, max: 20, violations: 0, answers: { 0: 1, 1: 0 }, attempt: 1, attemptsAllowed: 1, submittedAt: '2026-09-26T11:15:00Z' },
-    { id: 'RES16', studentId: 'STU005', examId: 'EXAM_SCI1', subject: 'Basic Science', type: 'CA 1', raw: 2, rawMax: 2, scaled: 19, max: 20, violations: 0, answers: { 0: 0, 1: 2 }, attempt: 1, attemptsAllowed: 1, submittedAt: '2026-09-26T11:15:00Z' }
+    { id: 'RES16', studentId: 'STU005', examId: 'EXAM_SCI1', subject: 'Basic Science', type: 'CA 1', raw: 2, rawMax: 2, scaled: 19, max: 20, violations: 0, answers: { 0: 0, 1: 2 }, attempt: 1, attemptsAllowed: 1, submittedAt: '2026-09-26T11:15:00Z' },
+
+    // CA 2 Assessment Results
+    { id: 'RES_CA2_1', studentId: 'STU001', examId: 'EXAM_CA2_M', subject: 'Math', type: 'CA 2', raw: 2, rawMax: 2, scaled: 19, max: 20, violations: 0, answers: {}, attempt: 1, attemptsAllowed: 1, submittedAt: '2026-10-02T10:00:00Z' },
+    { id: 'RES_CA2_2', studentId: 'STU001', examId: 'EXAM_CA2_E', subject: 'English', type: 'CA 2', raw: 2, rawMax: 2, scaled: 18, max: 20, violations: 0, answers: {}, attempt: 1, attemptsAllowed: 1, submittedAt: '2026-10-04T09:30:00Z' },
+    { id: 'RES_CA2_3', studentId: 'STU001', examId: 'EXAM_CA2_S', subject: 'Basic Science', type: 'CA 2', raw: 2, rawMax: 2, scaled: 17, max: 20, violations: 0, answers: {}, attempt: 1, attemptsAllowed: 1, submittedAt: '2026-10-06T11:15:00Z' },
+    { id: 'RES_CA2_4', studentId: 'STU002', examId: 'EXAM_CA2_M', subject: 'Math', type: 'CA 2', raw: 1, rawMax: 2, scaled: 16, max: 20, violations: 0, answers: {}, attempt: 1, attemptsAllowed: 1, submittedAt: '2026-10-02T10:00:00Z' },
+    { id: 'RES_CA2_5', studentId: 'STU002', examId: 'EXAM_CA2_E', subject: 'English', type: 'CA 2', raw: 2, rawMax: 2, scaled: 17, max: 20, violations: 0, answers: {}, attempt: 1, attemptsAllowed: 1, submittedAt: '2026-10-04T09:30:00Z' },
+    { id: 'RES_CA2_6', studentId: 'STU002', examId: 'EXAM_CA2_S', subject: 'Basic Science', type: 'CA 2', raw: 1, rawMax: 2, scaled: 15, max: 20, violations: 0, answers: {}, attempt: 1, attemptsAllowed: 1, submittedAt: '2026-10-06T11:15:00Z' },
+    { id: 'RES_CA2_7', studentId: 'STU003', examId: 'EXAM_CA2_M', subject: 'Math', type: 'CA 2', raw: 2, rawMax: 2, scaled: 20, max: 20, violations: 0, answers: {}, attempt: 1, attemptsAllowed: 1, submittedAt: '2026-10-02T10:00:00Z' },
+    { id: 'RES_CA2_8', studentId: 'STU003', examId: 'EXAM_CA2_E', subject: 'English', type: 'CA 2', raw: 2, rawMax: 2, scaled: 20, max: 20, violations: 0, answers: {}, attempt: 1, attemptsAllowed: 1, submittedAt: '2026-10-04T09:30:00Z' },
+    { id: 'RES_CA2_9', studentId: 'STU003', examId: 'EXAM_CA2_S', subject: 'Basic Science', type: 'CA 2', raw: 2, rawMax: 2, scaled: 20, max: 20, violations: 0, answers: {}, attempt: 1, attemptsAllowed: 1, submittedAt: '2026-10-06T11:15:00Z' },
+
+    // Terminal Examination Results
+    { id: 'RES_EX1', studentId: 'STU001', examId: 'EXAM_TERM_M', subject: 'Math', type: 'Examination', raw: 55, rawMax: 60, scaled: 55, max: 60, violations: 0, answers: {}, attempt: 1, attemptsAllowed: 1, submittedAt: '2026-10-08T10:00:00Z' },
+    { id: 'RES_EX2', studentId: 'STU001', examId: 'EXAM_TERM_E', subject: 'English', type: 'Examination', raw: 54, rawMax: 60, scaled: 54, max: 60, violations: 0, answers: {}, attempt: 1, attemptsAllowed: 1, submittedAt: '2026-10-09T10:00:00Z' },
+    { id: 'RES_EX3', studentId: 'STU001', examId: 'EXAM_TERM_S', subject: 'Basic Science', type: 'Examination', raw: 56, rawMax: 60, scaled: 56, max: 60, violations: 0, answers: {}, attempt: 1, attemptsAllowed: 1, submittedAt: '2026-10-10T10:00:00Z' }
   ],
   attendance: [
     { studentId: 'STU001', days: 60, present: 58, absent: 2, percent: 96.67 },

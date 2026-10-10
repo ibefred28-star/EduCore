@@ -135,12 +135,14 @@ export interface FirestoreAttemptDoc {
   attemptNumber: number;
   status: 'in_progress' | 'submitted' | 'auto_submitted' | 'abandoned';
   startTime: string;
+  startedAt?: string;
   expiryTime: string;
   submittedAt?: string;
   answers: Record<number, any>;
   currentQuestionIndex: number;
   violationsCount: number;
   lastHeartbeat: number;
+  gradingStatus?: 'pending' | 'in_progress' | 'graded';
   createdAt: string;
   updatedAt: string;
 }
