@@ -10,10 +10,14 @@ export const UserService = {
    */
   async getUserProfile(schoolId: string, username: string): Promise<FirestoreUserDoc | null> {
     const cleanSchool = schoolId || 'global';
-    const userRef = doc(db, FirestorePaths.user(cleanSchool, username));
-    const snap = await getDoc(userRef);
-    if (snap.exists()) {
-      return snap.data() as FirestoreUserDoc;
+    try {
+      const userRef = doc(db, FirestorePaths.user(cleanSchool, username));
+      const snap = await getDoc(userRef);
+      if (snap.exists()) {
+        return snap.data() as FirestoreUserDoc;
+      }
+    } catch (err) {
+      console.warn('Could not read user profile from Firestore:', err);
     }
 
     // Fallback: If student was created in the school roster, reconcile profile

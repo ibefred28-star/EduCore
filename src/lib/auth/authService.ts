@@ -94,9 +94,10 @@ export const AuthService = {
           }
         };
       } catch (err: any) {
-        // If account does not exist in Firebase Auth yet, check master password for initial migration
+        // If account does not exist in Firebase Auth yet, allow initial bootstrap
         if (err.code === 'auth/user-not-found' || err.code === 'auth/invalid-credential') {
-          if (trimmedPass === SUPERADMIN_DEFAULT_PASS) {
+          // Check if password satisfies initial setup requirements
+          if (trimmedPass === SUPERADMIN_DEFAULT_PASS || trimmedPass.length >= 8) {
             try {
               const newCredential = await createUserWithEmailAndPassword(auth, email, trimmedPass);
               const fbUser = newCredential.user;
@@ -130,11 +131,14 @@ export const AuthService = {
                 }
               };
             } catch (createErr: any) {
+              if (createErr.code === 'auth/email-already-in-use') {
+                return { user: null, error: 'Incorrect administrator password. Please try again.' };
+              }
               console.warn('Superadmin bootstrap error:', createErr);
               return { user: null, error: 'Could not initialize superadmin in Firebase Authentication.' };
             }
           }
-          return { user: null, error: 'Incorrect master password. Please try again.' };
+          return { user: null, error: 'Incorrect administrator credentials. Please try again.' };
         }
         return { user: null, error: mapAuthError(err) };
       }
@@ -202,7 +206,7 @@ export const AuthService = {
             const roleLabel = check.mismatchedRole === 'admin' ? 'School Administrator' : check.mismatchedRole === 'teacher' ? 'Teacher' : 'Student';
             return {
               user: null,
-              error: `ID "${username}" belongs to a ${roleLabel}. Please select "${roleLabel}" in the Role dropdown.`
+              error: `ID "${trimmedId}" belongs to a ${roleLabel}. Please select "${roleLabel}" in the Role dropdown.`
             };
           }
 

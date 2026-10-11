@@ -2,6 +2,7 @@ import { Role, Grade, QuestionType, QuestionDifficulty, BankQuestionStatus } fro
 
 export interface FirestoreStudentDoc {
   id: string;
+  uid?: string;
   schoolId: string;
   name: string;
   class: string;
@@ -20,6 +21,7 @@ export interface FirestoreStudentDoc {
 
 export interface FirestoreTeacherDoc {
   id: string;
+  uid?: string;
   schoolId: string;
   name: string;
   email?: string;

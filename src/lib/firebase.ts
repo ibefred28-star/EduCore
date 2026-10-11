@@ -35,9 +35,7 @@ if (typeof window !== 'undefined') {
   initAppCheck();
   // Connection validation
   getDocFromServer(doc(db, 'test', 'connection')).catch((error) => {
-    if (error instanceof Error && error.message.includes('the client is offline')) {
-      console.warn('Firestore offline status check: check network configuration.');
-    }
+    // Silently ignore connection probes and permission checks
   });
 }
 

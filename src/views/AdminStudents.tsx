@@ -13,10 +13,10 @@ export default function AdminStudents() {
   const showToast = useToastStore(s => s.showToast);
 
   // Real-time Firestore subscription for student roster
-  const { students: liveStudents } = useStudentsSubscription(schoolId);
+  const { students: liveStudents, loading: studentsLoading } = useStudentsSubscription(schoolId);
 
   const displayStudents = useMemo(() => {
-    if (liveStudents && liveStudents.length > 0) {
+    if (!studentsLoading && Array.isArray(liveStudents)) {
       return liveStudents.map(s => ({
         id: s.id,
         name: s.name,
@@ -24,13 +24,13 @@ export default function AdminStudents() {
         photo: s.photo || ''
       }));
     }
-    return data.students.map(s => ({
+    return (data.students || []).map(s => ({
       id: s.id,
       name: s.name,
       class: s.class,
       photo: s.photo || ''
     }));
-  }, [liveStudents, data.students]);
+  }, [liveStudents, studentsLoading, data.students]);
   
   const [isOpen, setIsOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -112,9 +112,9 @@ export default function AdminStudents() {
         }
       });
 
-      // 3. Persist in Firestore Student repository
+      // 3. Persist in Firestore Student repository with linked Auth UID
       if (schoolId) {
-        StudentRepository.upsertStudent(schoolId, cleanStudent).catch(console.warn);
+        StudentRepository.upsertStudent(schoolId, { ...cleanStudent, uid: provRes.uid }).catch(console.warn);
       }
 
       showToast(editingId ? 'Student updated and credentials synchronized' : 'Student account created and credentials ready');
@@ -169,18 +169,38 @@ export default function AdminStudents() {
     }
   };
 
-  const confirmDelete = () => {
+  const confirmDelete = async () => {
     if (!deleteConfirm) return;
-    updateData(draft => {
-      draft.students = draft.students.filter(s => s.id !== deleteConfirm);
-      draft.results = draft.results.filter(r => r.studentId !== deleteConfirm);
-      draft.attendance = draft.attendance.filter(a => a.studentId !== deleteConfirm);
-    });
-    if (schoolId) {
-      StudentRepository.deleteStudent(schoolId, deleteConfirm).catch(console.warn);
+    if (!schoolId) {
+      showToast('No active school selected');
+      return;
     }
-    showToast('Student deleted');
-    setDeleteConfirm(null);
+    try {
+      // 1. Authoritatively delete Firebase Auth account and server profiles
+      const res = await AdminProvisioningService.deleteStudent({
+        schoolId,
+        studentId: deleteConfirm
+      });
+
+      if (!res.success) {
+        showToast(res.error || 'Failed to delete student from Firebase Authentication.');
+        return;
+      }
+
+      // 2. Remove student from active student roster (preserving results & attendance for academic integrity)
+      updateData(draft => {
+        draft.students = draft.students.filter(s => s.id !== deleteConfirm);
+      });
+
+      if (schoolId) {
+        StudentRepository.deleteStudent(schoolId, deleteConfirm).catch(console.warn);
+      }
+
+      showToast('Student deleted and authentication credentials revoked');
+      setDeleteConfirm(null);
+    } catch (err: any) {
+      showToast(err.message || 'Error deleting student');
+    }
   };
 
   const handlePhoto = (e: React.ChangeEvent<HTMLInputElement>) => {

@@ -20,64 +20,6 @@ function sanitizeState(incoming: AppData): AppData {
   if (!Array.isArray(copy.exams)) copy.exams = [];
   if (!Array.isArray(copy.questions)) copy.questions = [];
 
-  // Ensure default question bank entries are seeded if none exist
-  if (copy.questions.length === 0 && DEFAULT_DATA.questions && DEFAULT_DATA.questions.length > 0) {
-    copy.questions = [...DEFAULT_DATA.questions];
-  } else if (DEFAULT_DATA.questions) {
-    DEFAULT_DATA.questions.forEach(defQ => {
-      if (!copy.questions.some(q => q.id === defQ.id)) {
-        copy.questions.push(defQ);
-      }
-    });
-  }
-  
-  // Ensure the 5 registered Primary 5 students exist
-  const primary5Students = copy.students.filter(s => isStudentInTeacherClasses(s.class, ['Primary 5']));
-  if (primary5Students.length < 5) {
-    DEFAULT_DATA.students.forEach(defStu => {
-      if (!copy.students.some(s => s.id === defStu.id)) {
-        copy.students.push(defStu);
-      }
-    });
-  }
-
-  // Ensure default exams for Primary 5 are present if none exist
-  DEFAULT_DATA.exams.forEach(defEx => {
-    if (!copy.exams.some(e => String(e.id) === String(defEx.id))) {
-      copy.exams.push(defEx);
-    }
-  });
-
-  // Ensure results for Primary 5 students exist if missing
-  DEFAULT_DATA.results.forEach(defRes => {
-    if (!copy.results.some(r => r.id === defRes.id)) {
-      copy.results.push(defRes);
-    }
-  });
-
-  // Ensure attendance for Primary 5 students exist if missing
-  DEFAULT_DATA.attendance.forEach(defAtt => {
-    if (!copy.attendance.some(a => a.studentId === defAtt.studentId)) {
-      copy.attendance.push(defAtt);
-    }
-  });
-
-  // Ensure teacher1 (or any teacher dedicated to Primary 5) does not have JSS2 polluting their class list
-  const t1 = copy.teachers.find(t => (t.id || '').trim().toLowerCase() === 'teacher1');
-  if (t1) {
-    if (!t1.classes || t1.classes.length === 0) {
-      t1.classes = ['Primary 5'];
-    } else {
-      // If teacher has Primary 5, remove JSS2 so it does not mix into their dashboard
-      if (t1.classes.some(c => isStudentInTeacherClasses('Primary 5', [c]))) {
-        t1.classes = t1.classes.filter(c => {
-          const cl = c.toLowerCase().replace(/\s+/g, '');
-          return cl !== 'jss2' && cl !== 'jss02';
-        });
-      }
-    }
-  }
-
   return copy;
 }
 

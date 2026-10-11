@@ -72,5 +72,5 @@ export const FirestorePaths = {
  */
 export function cleanId(id: string | number | undefined | null): string {
   if (id === undefined || id === null) return 'default';
-  return String(id).trim().replace(/\//g, '_');
+  return String(id).trim().toLowerCase().replace(/\//g, '_');
 }
