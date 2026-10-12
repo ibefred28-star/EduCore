@@ -303,17 +303,42 @@ export default function CBT() {
         rawQuestions.forEach((q, idx) => {
           const w = Number(q.marks) || 1;
           totalMax += w;
-          const ans = answersRef.current[idx];
+          const ans = answersRef.current[idx] !== undefined ? answersRef.current[idx] : answersRef.current[String(idx)];
           if (ans !== undefined && ans !== null && ans !== '') {
+            let isCorrect = false;
             if (q.type === 'mcq' || q.type === 'diagram') {
-              if (Number(ans) === Number(q.ans)) calculatedRaw += w;
+              const correctAns = q.ans;
+              const options = q.options || [];
+              if (Number(ans) === Number(correctAns)) {
+                isCorrect = true;
+              } else if (String(ans).trim().toLowerCase() === String(correctAns).trim().toLowerCase()) {
+                isCorrect = true;
+              } else if (options.length > 0) {
+                const correctIdx = Number(correctAns);
+                const studentIdx = Number(ans);
+                if (Number.isFinite(correctIdx) && options[correctIdx] !== undefined) {
+                  if (String(options[correctIdx]).trim().toLowerCase() === String(ans).trim().toLowerCase()) isCorrect = true;
+                }
+                if (Number.isFinite(studentIdx) && options[studentIdx] !== undefined && Number.isFinite(correctIdx)) {
+                  if (String(options[studentIdx]).trim().toLowerCase() === String(options[correctIdx]).trim().toLowerCase()) isCorrect = true;
+                }
+              }
             } else if (q.type === 'true_false') {
-              const norm = (v: any) => (typeof v === 'boolean' ? (v ? 0 : 1) : ['true', 't', '1'].includes(String(v).toLowerCase()) ? 0 : 1);
-              if (norm(ans) === norm(q.ans)) calculatedRaw += w;
+              const norm = (v: any) => {
+                if (typeof v === 'boolean') return v ? 1 : 0;
+                if (typeof v === 'number') return v === 1 || v === 0 ? v : -1;
+                const s = String(v ?? '').trim().toLowerCase();
+                if (['true', 't', 'yes', '1'].includes(s)) return 1;
+                if (['false', 'f', 'no', '0'].includes(s)) return 0;
+                return -1;
+              };
+              if (norm(ans) === norm(q.ans)) isCorrect = true;
             } else if (q.type === 'fill_blank') {
-              const exp = Array.isArray(q.answers) ? q.answers : q.answer ? [q.answer] : [];
-              if (exp.some((e: any) => String(ans).trim().toLowerCase() === String(e).trim().toLowerCase())) calculatedRaw += w;
+              const exp = Array.isArray(q.answers) ? q.answers : q.answer ? [q.answer] : q.ans !== undefined ? [q.ans] : [];
+              const got = String(ans).trim().toLowerCase();
+              if (exp.some((e: any) => got === String(e ?? '').trim().toLowerCase())) isCorrect = true;
             }
+            if (isCorrect) calculatedRaw += w;
           }
         });
         finalRawMax = totalMax > 0 ? totalMax : sanitizedQs.length;

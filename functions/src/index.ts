@@ -279,7 +279,7 @@ export const submitExamAttempt = onCall(async (request) => {
     const questionWeight = Number(keyItem.marks) || 1;
     totalMaxMarks += questionWeight;
 
-    const studentAns = submittedAnswers[idx];
+    const studentAns = submittedAnswers[idx] !== undefined ? submittedAnswers[idx] : submittedAnswers[String(idx)];
     const qType = keyItem.type || 'mcq';
     let isCorrect = false;
     let awardedMarks = 0;
@@ -290,19 +290,47 @@ export const submitExamAttempt = onCall(async (request) => {
       pendingManualCount++;
     } else if (studentAns !== undefined && studentAns !== null && studentAns !== '') {
       if (qType === 'mcq' || qType === 'diagram') {
-        isCorrect = Number(studentAns) === Number(keyItem.ans);
+        const correctAns = keyItem.ans;
+        const options = keyItem.options || [];
+
+        if (Number(studentAns) === Number(correctAns)) {
+          isCorrect = true;
+        } else if (String(studentAns).trim().toLowerCase() === String(correctAns).trim().toLowerCase()) {
+          isCorrect = true;
+        } else if (options.length > 0) {
+          const correctIdx = Number(correctAns);
+          const studentIdx = Number(studentAns);
+          if (Number.isFinite(correctIdx) && options[correctIdx] !== undefined) {
+            if (String(options[correctIdx]).trim().toLowerCase() === String(studentAns).trim().toLowerCase()) {
+              isCorrect = true;
+            }
+          }
+          if (Number.isFinite(studentIdx) && options[studentIdx] !== undefined && Number.isFinite(correctIdx)) {
+            if (String(options[studentIdx]).trim().toLowerCase() === String(options[correctIdx]).trim().toLowerCase()) {
+              isCorrect = true;
+            }
+          }
+        } else {
+          const letterMap: Record<string, number> = { a: 0, b: 1, c: 2, d: 3, e: 4 };
+          const sStr = String(studentAns).trim().toLowerCase();
+          const cStr = String(correctAns).trim().toLowerCase();
+          if (letterMap[sStr] !== undefined && letterMap[sStr] === Number(correctAns)) isCorrect = true;
+          if (letterMap[cStr] !== undefined && letterMap[cStr] === Number(studentAns)) isCorrect = true;
+        }
       } else if (qType === 'true_false') {
         const normalize = (v: any) => {
-          if (typeof v === 'boolean') return v ? 0 : 1;
+          if (typeof v === 'boolean') return v ? 1 : 0;
+          if (typeof v === 'number') return v === 1 || v === 0 ? v : -1;
           const s = String(v ?? '').trim().toLowerCase();
-          if (['true', 't', 'yes', '0'].includes(s)) return 0;
-          return 1;
+          if (['true', 't', 'yes', '1'].includes(s)) return 1;
+          if (['false', 'f', 'no', '0'].includes(s)) return 0;
+          return -1;
         };
         isCorrect = normalize(studentAns) === normalize(keyItem.ans);
       } else if (qType === 'fill_blank') {
         const expectedArr = Array.isArray(keyItem.answers)
           ? keyItem.answers
-          : keyItem.answer ? [keyItem.answer] : [];
+          : keyItem.answer ? [keyItem.answer] : keyItem.ans !== undefined ? [keyItem.ans] : [];
         const got = String(studentAns).trim().toLowerCase();
         isCorrect = expectedArr.some((expected: any) => got === String(expected ?? '').trim().toLowerCase());
       }

@@ -9,24 +9,42 @@ import { useStudentResultsSubscription } from '../hooks/useDomainSubscriptions';
 import { CheckCircle2, Clock, Award, AlertCircle, FileText } from 'lucide-react';
 
 function normalizeTF(v: any) {
-  if (typeof v === 'boolean') return v ? 0 : 1;
-  if (typeof v === 'number') return v === 0 ? 0 : 1;
+  if (typeof v === 'boolean') return v ? 1 : 0;
+  if (typeof v === 'number') return v === 1 || v === 0 ? v : -1;
   const x = String(v ?? '').trim().toLowerCase();
-  if (['true', 't', 'yes', '1'].includes(x)) return 0;
-  if (['false', 'f', 'no', '0'].includes(x)) return 1;
+  if (['true', 't', 'yes', '1'].includes(x)) return 1;
+  if (['false', 'f', 'no', '0'].includes(x)) return 0;
   return -1;
 }
 
 function answerIsCorrect(q: any, a: any) {
   const type = q.type || 'mcq';
-  if (a === undefined || a === null) return false;
+  if (a === undefined || a === null || a === '') return false;
   if (type === 'fill_blank') {
-    const expected = Array.isArray(q.answers) ? q.answers : q.answer;
-    const vals = Array.isArray(expected) ? expected : [expected];
+    const expected = Array.isArray(q.answers) ? q.answers : q.answer ? [q.answer] : q.ans !== undefined ? [q.ans] : [];
     const got = String(a).trim().toLowerCase();
-    return vals.some((v: any) => got === String(v ?? '').trim().toLowerCase());
+    return expected.some((v: any) => got === String(v ?? '').trim().toLowerCase());
   }
-  if (type === 'true_false') return normalizeTF(a) === normalizeTF(q.ans);
+  if (type === 'true_false') {
+    return normalizeTF(a) === normalizeTF(q.ans);
+  }
+  if (type === 'mcq' || type === 'diagram') {
+    const correctAns = q.ans;
+    const options = q.options || [];
+    if (Number(a) === Number(correctAns)) return true;
+    if (String(a).trim().toLowerCase() === String(correctAns).trim().toLowerCase()) return true;
+    if (options.length > 0) {
+      const correctIdx = Number(correctAns);
+      const studentIdx = Number(a);
+      if (Number.isFinite(correctIdx) && options[correctIdx] !== undefined) {
+        if (String(options[correctIdx]).trim().toLowerCase() === String(a).trim().toLowerCase()) return true;
+      }
+      if (Number.isFinite(studentIdx) && options[studentIdx] !== undefined && Number.isFinite(correctIdx)) {
+        if (String(options[studentIdx]).trim().toLowerCase() === String(options[correctIdx]).trim().toLowerCase()) return true;
+      }
+    }
+    return false;
+  }
   const expected = Number(q.ans);
   return Number.isFinite(expected) && Number(a) === expected;
 }
