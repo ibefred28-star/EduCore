@@ -1,7 +1,7 @@
 import { useState, useMemo, useRef, type ChangeEvent } from 'react';
 import { useStore } from '../store';
 import { useToastStore } from '../store/toast';
-import { Button, Input, Label, Modal, Select, Textarea } from '../components/ui';
+import { Button, Input, Label, Modal, Select, Textarea, SkeletonCard, SkeletonRow } from '../components/ui';
 import { BankQuestion, QuestionType, QuestionDifficulty, BankQuestionStatus, Exam } from '../types';
 import { CLASS_OPTIONS } from '../constants';
 import {
@@ -44,7 +44,7 @@ export default function QuestionBankView() {
   const { data, currentUser, currentRole, updateData, schoolId } = useStore();
   const showToast = useToastStore(s => s.showToast);
 
-  const { questions: liveQuestions } = useQuestionBankSubscription(schoolId);
+  const { questions: liveQuestions, loading: questionsLoading } = useQuestionBankSubscription(schoolId);
   const questions: BankQuestion[] = useMemo(() => {
     if (liveQuestions && liveQuestions.length > 0) return liveQuestions;
     return data.questions || [];
@@ -465,7 +465,7 @@ export default function QuestionBankView() {
     reader.readAsText(file);
   };
 
-  const confirmImport = () => {
+  const confirmImport = async () => {
     if (!importPreview || importPreview.valid.length === 0) {
       showToast('No valid questions to import');
       return;
@@ -476,11 +476,18 @@ export default function QuestionBankView() {
       draft.questions.unshift(...imported);
     });
     if (schoolId) {
-      imported.forEach(q => {
-        QuestionBankRepository.upsertQuestion(schoolId, q).catch(console.warn);
-      });
+      try {
+        await Promise.all(
+          imported.map(q => QuestionBankRepository.upsertQuestion(schoolId, q))
+        );
+        showToast(`Successfully imported and persisted ${imported.length} questions into Question Bank`);
+      } catch (err: any) {
+        console.error('Error persisting imported questions:', err);
+        showToast(`Imported locally, but Firestore persistence failed: ${err.message || ''}`);
+      }
+    } else {
+      showToast(`Successfully imported ${imported.length} questions into Question Bank`);
     }
-    showToast(`Successfully imported ${imported.length} questions into Question Bank`);
     setIsImportModalOpen(false);
     setImportPreview(null);
     setImportFileName('');
@@ -760,7 +767,13 @@ export default function QuestionBankView() {
       )}
 
       {/* Questions Listing */}
-      {filteredQuestions.length === 0 ? (
+      {questionsLoading && filteredQuestions.length === 0 ? (
+        <div className="space-y-3">
+          <SkeletonRow />
+          <SkeletonRow />
+          <SkeletonRow />
+        </div>
+      ) : filteredQuestions.length === 0 ? (
         <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-12 text-center">
           <FileQuestion className="w-12 h-12 text-slate-300 mx-auto mb-3" />
           <h3 className="text-lg font-bold text-slate-700 mb-1">No questions found</h3>

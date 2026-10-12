@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { useStore } from '../store';
 import { useToastStore } from '../store/toast';
-import { Button, Card } from '../components/ui';
+import { Button, Card, SkeletonCard } from '../components/ui';
 import { Student, Exam } from '../types';
 import { useExamsSubscription, useStudentResultsSubscription } from '../hooks/useDomainSubscriptions';
 import { CheckCircle2, Clock, BookOpen, AlertCircle } from 'lucide-react';
@@ -13,7 +13,7 @@ export default function MyExams() {
   const studentClass = currentUser ? (currentUser as Student).class : '';
 
   // Real-time Firestore subscription for exams
-  const { exams: liveExams } = useExamsSubscription(schoolId, studentClass);
+  const { exams: liveExams, loading: examsLoading } = useExamsSubscription(schoolId, studentClass);
   // Real-time Firestore subscription for student's official results
   const { results: liveResults } = useStudentResultsSubscription(schoolId, currentUser?.id);
 
@@ -35,7 +35,8 @@ export default function MyExams() {
   // Categorize active exams for this student's class
   const activeExams = useMemo(() => {
     return effectiveExams.filter(e => {
-      if (e.status !== 'active') return false;
+      const status = String(e.status || '').toLowerCase();
+      if (status !== 'active') return false;
       // If targetClasses is specified, check inclusion (allow if empty/undefined or includes studentClass)
       if (e.targetClasses && e.targetClasses.length > 0 && studentClass) {
         if (!e.targetClasses.includes(studentClass)) return false;
@@ -105,7 +106,13 @@ export default function MyExams() {
 
       {/* Content */}
       {activeTab === 'available' ? (
-        availableExams.length === 0 ? (
+        examsLoading && availableExams.length === 0 ? (
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+            <SkeletonCard />
+            <SkeletonCard />
+            <SkeletonCard />
+          </div>
+        ) : availableExams.length === 0 ? (
           <div className="bg-white rounded-xl p-12 text-center border border-slate-200 shadow-sm">
             <BookOpen className="w-12 h-12 text-slate-300 mx-auto mb-3" />
             <h3 className="text-lg font-bold text-slate-700">No Available Exams</h3>
