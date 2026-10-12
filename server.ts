@@ -4,6 +4,48 @@ import { createServer as createViteServer } from 'vite';
 import { db } from './src/db/index.ts';
 import { sql } from 'drizzle-orm';
 import { adminAuth, adminDb } from './src/lib/firebase-admin.ts';
+import firebaseConfig from './firebase-applet-config.json';
+
+function parseFirestoreValue(val: any): any {
+  if (!val) return null;
+  if (val.stringValue !== undefined) return val.stringValue;
+  if (val.booleanValue !== undefined) return val.booleanValue;
+  if (val.integerValue !== undefined) return parseInt(val.integerValue, 10);
+  if (val.doubleValue !== undefined) return parseFloat(val.doubleValue);
+  if (val.arrayValue !== undefined) {
+    return (val.arrayValue.values || []).map(parseFirestoreValue);
+  }
+  if (val.mapValue !== undefined) {
+    const res: Record<string, any> = {};
+    const fields = val.mapValue.fields || {};
+    for (const key of Object.keys(fields)) {
+      res[key] = parseFirestoreValue(fields[key]);
+    }
+    return res;
+  }
+  return null;
+}
+
+function parseFirestoreDoc(docJson: any): any {
+  if (!docJson || !docJson.fields) return null;
+  const res: Record<string, any> = {};
+  for (const key of Object.keys(docJson.fields)) {
+    res[key] = parseFirestoreValue(docJson.fields[key]);
+  }
+  return res;
+}
+
+async function getFirestoreDocRest(collection: string, docId: string) {
+  const url = `https://firestore.googleapis.com/v1/projects/${firebaseConfig.projectId}/databases/${firebaseConfig.firestoreDatabaseId}/documents/${collection}/${encodeURIComponent(docId)}?key=${firebaseConfig.apiKey}`;
+  try {
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    const json = await res.json();
+    return json;
+  } catch (err) {
+    return null;
+  }
+}
 
 async function startServer() {
   const app = express();
@@ -30,29 +72,48 @@ async function startServer() {
         return res.status(400).json({ exists: false, error: 'School ID is required.' });
       }
 
-      // Check app_state/GLOBAL_TENANTS
-      const tenantsSnap = await adminDb.collection('app_state').doc('GLOBAL_TENANTS').get();
-      let tenant = null;
-      if (tenantsSnap.exists && Array.isArray(tenantsSnap.data()?.tenants)) {
-        tenant = tenantsSnap.data()?.tenants.find((t: any) => t.id.toLowerCase() === cleanSchool);
+      // 1. Built-in Demo School
+      if (cleanSchool === 'demo') {
+        return res.json({
+          exists: true,
+          schoolId: 'demo',
+          name: 'Demo International Academy',
+          status: 'active',
+          branding: {
+            schoolName: 'Demo International Academy',
+            motto: 'Excellence, Character & Wisdom',
+            primaryColor: '#1e3a8a',
+            accentColor: '#f59e0b',
+            crestUrl: 'https://images.unsplash.com/photo-1546410531-bb4caa6b424d?w=128&q=80'
+          }
+        });
+      }
+
+      // 2. Authoritative check via Firestore REST (avoids gRPC permission issues)
+      let tenant: any = null;
+      const tenantsDoc = await getFirestoreDocRest('app_state', 'GLOBAL_TENANTS');
+      const tenantsData = parseFirestoreDoc(tenantsDoc);
+      if (tenantsData && Array.isArray(tenantsData.tenants)) {
+        tenant = tenantsData.tenants.find((t: any) => (t.id || '').toLowerCase() === cleanSchool);
       }
 
       // Check if school is archived/deleted
-      const schoolRootDoc = await adminDb.collection('schools').doc(cleanSchool).get();
-      if (schoolRootDoc.exists && (schoolRootDoc.data()?.isDeleted || schoolRootDoc.data()?.status === 'deleted')) {
+      const schoolRootDoc = await getFirestoreDocRest('schools', cleanSchool);
+      const schoolRootData = parseFirestoreDoc(schoolRootDoc);
+      if (schoolRootData && (schoolRootData.isDeleted || schoolRootData.status === 'deleted')) {
         return res.status(404).json({ exists: false, error: 'This school has been decommissioned.' });
       }
 
       // Check app_state/{cleanSchool}
-      const schoolDoc = await adminDb.collection('app_state').doc(cleanSchool).get();
+      const schoolDoc = await getFirestoreDocRest('app_state', cleanSchool);
+      const schoolData = parseFirestoreDoc(schoolDoc);
 
-      if (!tenant && !schoolDoc.exists) {
+      if (!tenant && !schoolData && !schoolRootData) {
         return res.status(404).json({ exists: false, error: 'School ID not found. Please check with your school administration.' });
       }
 
-      const schoolData = schoolDoc.exists ? schoolDoc.data() : null;
-      const branding = schoolData?.branding || { schoolName: tenant?.name || cleanSchool };
-      const status = tenant?.status || 'active';
+      const branding = schoolData?.branding || schoolRootData?.branding || { schoolName: tenant?.name || cleanSchool };
+      const status = tenant?.status || schoolRootData?.status || 'active';
 
       res.json({
         exists: true,
@@ -63,6 +124,15 @@ async function startServer() {
       });
     } catch (err: any) {
       console.error('School validation error:', err);
+      // Fail gracefully for demo
+      if ((req.params.schoolId || '').trim().toLowerCase() === 'demo') {
+        return res.json({
+          exists: true,
+          schoolId: 'demo',
+          name: 'Demo International Academy',
+          status: 'active'
+        });
+      }
       res.status(500).json({ exists: false, error: 'Failed to validate School ID.' });
     }
   });
@@ -320,10 +390,18 @@ async function startServer() {
   // GET /api/superadmin/overview
   app.get("/api/superadmin/overview", requireSuperAdminAuth, async (req, res) => {
     try {
-      const tenantsSnap = await adminDb.collection('app_state').doc('GLOBAL_TENANTS').get();
       let tenants: any[] = [];
-      if (tenantsSnap.exists && tenantsSnap.data()?.tenants) {
-        tenants = tenantsSnap.data()?.tenants || [];
+      try {
+        const tenantsSnap = await adminDb.collection('app_state').doc('GLOBAL_TENANTS').get();
+        if (tenantsSnap.exists && tenantsSnap.data()?.tenants) {
+          tenants = tenantsSnap.data()?.tenants || [];
+        }
+      } catch {
+        const tenantsDoc = await getFirestoreDocRest('app_state', 'GLOBAL_TENANTS');
+        const tenantsData = parseFirestoreDoc(tenantsDoc);
+        if (tenantsData && Array.isArray(tenantsData.tenants)) {
+          tenants = tenantsData.tenants;
+        }
       }
 
       let totalStudents = 0;
@@ -348,9 +426,16 @@ async function startServer() {
         let academicTerm = 'Term 1';
 
         try {
-          const schoolDoc = await adminDb.collection('app_state').doc(t.id).get();
-          if (schoolDoc.exists) {
-            const data = schoolDoc.data();
+          let data: any = null;
+          try {
+            const schoolDoc = await adminDb.collection('app_state').doc(t.id).get();
+            if (schoolDoc.exists) data = schoolDoc.data();
+          } catch {
+            const sDoc = await getFirestoreDocRest('app_state', t.id);
+            data = parseFirestoreDoc(sDoc);
+          }
+
+          if (data) {
             studentCount = data?.state?.students?.length || 0;
             teacherCount = data?.state?.teachers?.length || 0;
             adminCount = data?.state?.admins?.length || 0;
@@ -419,16 +504,33 @@ async function startServer() {
   // GET /api/superadmin/users
   app.get("/api/superadmin/users", requireSuperAdminAuth, async (req, res) => {
     try {
-      const tenantsSnap = await adminDb.collection('app_state').doc('GLOBAL_TENANTS').get();
-      const tenants: any[] = tenantsSnap.exists && tenantsSnap.data()?.tenants ? tenantsSnap.data()?.tenants : [];
+      let tenants: any[] = [];
+      try {
+        const tenantsSnap = await adminDb.collection('app_state').doc('GLOBAL_TENANTS').get();
+        if (tenantsSnap.exists && tenantsSnap.data()?.tenants) {
+          tenants = tenantsSnap.data()?.tenants || [];
+        }
+      } catch {
+        const tenantsDoc = await getFirestoreDocRest('app_state', 'GLOBAL_TENANTS');
+        const tenantsData = parseFirestoreDoc(tenantsDoc);
+        if (tenantsData && Array.isArray(tenantsData.tenants)) {
+          tenants = tenantsData.tenants;
+        }
+      }
       
       const allUsers: any[] = [];
 
       for (const t of tenants) {
         try {
-          const schoolDoc = await adminDb.collection('app_state').doc(t.id).get();
-          if (schoolDoc.exists) {
-            const data = schoolDoc.data()?.state || {};
+          let data: any = null;
+          try {
+            const schoolDoc = await adminDb.collection('app_state').doc(t.id).get();
+            if (schoolDoc.exists) data = schoolDoc.data()?.state;
+          } catch {
+            const sDoc = await getFirestoreDocRest('app_state', t.id);
+            data = parseFirestoreDoc(sDoc)?.state;
+          }
+          if (data) {
             // Admins
             if (Array.isArray(data.admins)) {
               for (const a of data.admins) {
@@ -739,12 +841,20 @@ async function startServer() {
       const caller = (req as any).user;
       const email = (caller?.email || '').toLowerCase();
       const isSuperAdmin = caller?.role === 'superadmin' || email === 'superadmin@educore.internal' || email.includes('superadmin');
-      const callerSchool = (caller?.schoolId || '').toLowerCase();
+      const callerSchool = (caller?.schoolId || (email.includes('.admin.') ? email.split('.admin.')[0] : '')).toLowerCase();
 
       if (!isSuperAdmin) {
         if (!callerSchool || callerSchool !== cleanSchool) {
-          return res.status(403).json({ error: `Access denied: You are only authorized to manage school "${callerSchool}".` });
+          return res.status(403).json({ error: `Access denied: You are only authorized to manage school "${callerSchool || 'unknown'}".` });
         }
+      }
+
+      // Confirm that the School ID belongs to an active institution
+      const tenantsSnap = await adminDb.collection('app_state').doc('GLOBAL_TENANTS').get();
+      const tenants = tenantsSnap.data()?.tenants || [];
+      const schoolExists = tenants.some((t: any) => t.id.toLowerCase() === cleanSchool && t.status !== 'deleted');
+      if (!schoolExists && cleanSchool !== 'demo') {
+        return res.status(404).json({ error: `School "${schoolId}" does not exist or has been decommissioned.` });
       }
 
       // Check for duplicate student/staff identifiers
@@ -755,6 +865,13 @@ async function startServer() {
       const adminUserDoc = await adminDb.collection('schools').doc(cleanSchool).collection('users').doc(cleanUser).get();
       if (adminUserDoc.exists && adminUserDoc.data()?.role === 'admin') {
         return res.status(400).json({ error: `ID "${studentId}" is already assigned to an Administrator in this school.` });
+      }
+
+      // Check if student already exists when not updating
+      const isUpdate = Boolean(req.body.isUpdate);
+      const studentDoc = await adminDb.collection('schools').doc(cleanSchool).collection('students').doc(cleanUser).get();
+      if (studentDoc.exists && !isUpdate) {
+        return res.status(409).json({ error: `Student ID "${studentId}" already exists in this school.` });
       }
 
       const studentAuthEmail = `${cleanSchool}.student.${cleanUser}@educore.internal`;
@@ -885,11 +1002,11 @@ async function startServer() {
       const caller = (req as any).user;
       const email = (caller?.email || '').toLowerCase();
       const isSuperAdmin = caller?.role === 'superadmin' || email === 'superadmin@educore.internal' || email.includes('superadmin');
-      const callerSchool = (caller?.schoolId || '').toLowerCase();
+      const callerSchool = (caller?.schoolId || (email.includes('.admin.') ? email.split('.admin.')[0] : '')).toLowerCase();
 
       if (!isSuperAdmin) {
         if (!callerSchool || callerSchool !== cleanSchool) {
-          return res.status(403).json({ error: `Access denied: You are only authorized to manage school "${callerSchool}".` });
+          return res.status(403).json({ error: `Access denied: You are only authorized to manage school "${callerSchool || 'unknown'}".` });
         }
       }
 

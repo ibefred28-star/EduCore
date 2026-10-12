@@ -7,12 +7,26 @@ import html2canvas from 'html2canvas-pro';
 import { Chart as ChartJS, CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend } from 'chart.js';
 import { Bar } from 'react-chartjs-2';
 import { isStudentInTeacherClasses } from '../lib/classUtils';
+import { computeStudentCASummary } from '../lib/caUtils';
+import CAReportCardView from './CAReportCardView';
 
 ChartJS.register(CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend);
 
-export default function ReportsView() {
+interface ReportsViewProps {
+  initialCategory?: 'academic' | 'ca1' | 'ca2' | 'caCombined' | 'afl';
+}
+
+export default function ReportsView({ initialCategory = 'academic' }: ReportsViewProps) {
   const { data, config, branding, currentUser, currentRole, updateData } = useStore();
   const showToast = useToastStore(s => s.showToast);
+
+  const [activeCategory, setActiveCategory] = useState<'academic' | 'ca1' | 'ca2' | 'caCombined' | 'afl'>(initialCategory);
+
+  useEffect(() => {
+    if (initialCategory) {
+      setActiveCategory(initialCategory);
+    }
+  }, [initialCategory]);
 
   const teacher = currentRole === 'teacher' 
     ? data.teachers.find(t => (t.id || '').trim().toLowerCase() === (currentUser?.id || '').trim().toLowerCase()) || (currentUser as any)
@@ -25,7 +39,7 @@ export default function ReportsView() {
   
   const [studentId, setStudentId] = useState(students[0]?.id || '');
   const [isReportOpen, setIsReportOpen] = useState(false);
-  const [reportKind, setReportKind] = useState<'academic' | 'afl'>('academic');
+  const [reportKind, setReportKind] = useState<'academic' | 'afl' | 'ca1' | 'ca2' | 'caCombined'>('academic');
   
   const [reportForm, setReportForm] = useState<any>({});
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
@@ -38,7 +52,7 @@ export default function ReportsView() {
     }
   }, [students, studentId]);
 
-  const generateReport = (kind: 'academic' | 'afl') => {
+  const generateReport = (kind: 'academic' | 'afl' | 'ca1' | 'ca2' | 'caCombined') => {
     const s = data.students.find(x => x.id === studentId);
     if (!s) return;
     
@@ -52,11 +66,11 @@ export default function ReportsView() {
     setReportForm({
       term: s.reportTerm || 'First Term',
       session: s.reportSession || '2026/2027',
-      position: s.position || '',
+      position: kind === 'ca1' ? (s.ca1Position || s.position || '') : kind === 'ca2' ? (s.ca2Position || s.position || '') : (s.position || ''),
       nextTerm: s.nextTerm || '',
       teacherName: s.teacherName || currentUser?.name || '',
-      teacherComment: s.teacherComment || (kind === 'academic' ? 'Good performance. Keep improving.' : 'Keep working consistently.'),
-      principalComment: s.principalComment || (kind === 'academic' ? 'We commend your effort and encourage continued excellence.' : 'We encourage continued progress.'),
+      teacherComment: s.teacherComment || (kind === 'ca1' ? (s.ca1TeacherComment || 'Good progress demonstrated in CA1.') : kind === 'ca2' ? (s.ca2TeacherComment || 'Continuous improvement shown in CA2.') : kind === 'academic' ? 'Good performance. Keep improving.' : 'Keep working consistently.'),
+      principalComment: s.principalComment || (kind === 'ca1' ? (s.ca1PrincipalComment || 'Commendable diligence.') : kind === 'ca2' ? (s.ca2PrincipalComment || 'Maintain focus towards terminal examination.') : kind === 'academic' ? 'We commend your effort and encourage continued excellence.' : 'We encourage continued progress.'),
       teacherSignature: s.teacherSignature || '',
       principalSignature: s.principalSignature || '',
       attDays: initialDays || '',
@@ -218,34 +232,67 @@ export default function ReportsView() {
   
   const renderAcademicReport = () => {
     if (!s) return null;
-    const official = data.results.filter(r => r.studentId === studentId && ['CA 1', 'CA 2', 'Examination'].includes(r.type));
-    const by: Record<string, any> = {};
-    
-    official.forEach(r => {
-      if (!by[r.subject]) by[r.subject] = { ca1: null, ca2: null, exam: null };
-      
-      const pct = r.rawMax > 0 ? (r.raw / r.rawMax) : 0;
-      
-      if (r.type === 'CA 1') by[r.subject].ca1 = r.scaled != null ? r.scaled : Math.round(pct * config.ca1);
-      if (r.type === 'CA 2') by[r.subject].ca2 = r.scaled != null ? r.scaled : Math.round(pct * config.ca2);
-      if (r.type === 'Examination') by[r.subject].exam = r.scaled != null ? r.scaled : Math.round(pct * config.exam);
+
+    const studentAssessments = (data.assessments || []).filter(a => a.studentId === studentId);
+    const studentResults = data.results.filter(r => r.studentId === studentId);
+
+    // Build unique subjects list
+    const subjectsSet = new Set<string>();
+    studentAssessments.forEach(a => { if (a.subjectId) subjectsSet.add(a.subjectId); });
+    studentResults.forEach(r => {
+      if (['CA 1', 'CA 2', 'Examination'].includes(r.type) && r.subject) subjectsSet.add(r.subject);
     });
-    
-    const rows = Object.keys(by).map(sub => {
-      const x = by[sub];
-      const total = (x.ca1 || 0) + (x.ca2 || 0) + (x.exam || 0);
-      const g = config.grades.find(z => total >= z.min) || config.grades[config.grades.length - 1];
-      return { sub, x, total, g };
+    if (subjectsSet.size === 0) {
+      (data.subjects || []).forEach(sub => subjectsSet.add(sub));
+    }
+    const allSubjects = Array.from(subjectsSet);
+
+    const caSummary = computeStudentCASummary(
+      studentId,
+      allSubjects,
+      data.assessments || [],
+      data.results || [],
+      config,
+      reportForm.session || '2026/2027',
+      reportForm.term || 'First Term'
+    );
+
+    const rows = caSummary.subjects.map(subItem => {
+      const ca1 = subItem.ca1Score;
+      const ca2 = subItem.ca2Score;
+      const combinedCA = subItem.combinedScore; // out of 40
+      const exam = subItem.examScore; // out of config.exam (e.g. 60)
+      const examMax = subItem.examMax || config.exam || 60;
+      const isComplete = subItem.isAcademicComplete;
+      const total = subItem.finalSubjectScore;
+      const g = isComplete && total !== null
+        ? (config.grades.find(z => total >= z.min) || config.grades[config.grades.length - 1])
+        : { grade: 'Inc', remark: 'Provisional (Pending Assessment)' };
+
+      return {
+        sub: subItem.subject,
+        ca1,
+        ca2,
+        combinedCA,
+        exam,
+        examMax,
+        total,
+        isComplete,
+        g
+      };
     });
-    
-    const avg = rows.length ? rows.reduce((a, r) => a + r.total, 0) / rows.length : 0;
-    const overallGrade = config.grades.find(z => avg >= z.min) || config.grades[config.grades.length - 1];
-    
+
+    const completeRows = rows.filter(r => r.isComplete && r.total !== null);
+    const avg = completeRows.length ? completeRows.reduce((a, r) => a + (r.total || 0), 0) / completeRows.length : 0;
+    const overallGrade = completeRows.length 
+      ? (config.grades.find(z => avg >= z.min) || config.grades[config.grades.length - 1])
+      : { grade: 'Inc', remark: 'Provisional Assessment' };
+
     const chartData = {
       labels: rows.map(x => x.sub),
       datasets: [{
-        label: 'Overall Examination Score (%)',
-        data: rows.map(x => Math.max(0, Math.min(100, x.total))),
+        label: 'Overall Academic Score (%)',
+        data: rows.map(x => x.total !== null ? Math.max(0, Math.min(100, x.total)) : 0),
         backgroundColor: branding.primary ? `${branding.primary}cc` : 'rgba(37, 99, 235, 0.75)',
         borderColor: branding.primary || '#2563eb',
         borderWidth: 1.5,
@@ -377,22 +424,44 @@ export default function ReportsView() {
               <thead>
                 <tr className="bg-slate-100 text-slate-800 font-bold border-b border-slate-300">
                   <th className="p-2 text-left">Subject</th>
-                  <th className="p-2 text-center w-[12%]">CA 1 ({config.ca1})</th>
-                  <th className="p-2 text-center w-[12%]">CA 2 ({config.ca2})</th>
-                  <th className="p-2 text-center w-[16%]">Exam ({config.exam})</th>
-                  <th className="p-2 text-center w-[13%]">Total (100)</th>
-                  <th className="p-2 text-center w-[11%]">Grade</th>
-                  <th className="p-2 text-left w-[18%]">Remark</th>
+                  <th className="p-2 text-center w-[10%]">CA 1 (20)</th>
+                  <th className="p-2 text-center w-[10%]">CA 2 (20)</th>
+                  <th className="p-2 text-center w-[14%] font-black text-blue-900">Combined CA (40)</th>
+                  <th className="p-2 text-center w-[13%]">Exam ({config.exam || 60})</th>
+                  <th className="p-2 text-center w-[13%] font-black text-slate-900">Total (100)</th>
+                  <th className="p-2 text-center w-[10%]">Grade</th>
+                  <th className="p-2 text-left w-[16%]">Remark</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200">
                 {rows.map((r, i) => (
                   <tr key={r.sub} className={i % 2 === 1 ? 'bg-slate-50/50' : 'bg-white'}>
                     <td className="p-1.5 px-2 font-medium text-slate-900">{r.sub}</td>
-                    <td className="p-1.5 text-center text-slate-700">{r.x.ca1 ?? '-'}</td>
-                    <td className="p-1.5 text-center text-slate-700">{r.x.ca2 ?? '-'}</td>
-                    <td className="p-1.5 text-center text-slate-700">{r.x.exam ?? '-'}</td>
-                    <td className="p-1.5 text-center font-bold text-slate-900">{r.total}</td>
+                    <td className="p-1.5 text-center text-slate-700">
+                      {r.ca1 !== null ? r.ca1 : <span className="text-amber-600 italic text-[10px]">Unrecorded</span>}
+                    </td>
+                    <td className="p-1.5 text-center text-slate-700">
+                      {r.ca2 !== null ? r.ca2 : <span className="text-amber-600 italic text-[10px]">Unrecorded</span>}
+                    </td>
+                    <td className="p-1.5 text-center font-bold text-blue-900">
+                      {r.combinedCA !== null ? (
+                        `${r.combinedCA} / 40`
+                      ) : (
+                        <span className="text-amber-700 font-medium text-[10px]">
+                          {r.ca1 !== null ? `${r.ca1} (Part)` : r.ca2 !== null ? `${r.ca2} (Part)` : 'Unrecorded'}
+                        </span>
+                      )}
+                    </td>
+                    <td className="p-1.5 text-center text-slate-700">
+                      {r.exam !== null ? `${r.exam} / ${r.examMax}` : <span className="text-amber-600 italic text-[10px]">Unrecorded</span>}
+                    </td>
+                    <td className="p-1.5 text-center font-bold text-slate-900">
+                      {r.isComplete && r.total !== null ? (
+                        r.total
+                      ) : (
+                        <span className="text-amber-700 font-semibold text-[10px]">Provisional</span>
+                      )}
+                    </td>
                     <td className="p-1.5 text-center">
                       <span className={`inline-block px-2 py-0.5 rounded text-[10px] ${getGradeBadge(r.g.grade)}`}>
                         {r.g.grade}
@@ -403,15 +472,15 @@ export default function ReportsView() {
                 ))}
                 {rows.length === 0 && (
                   <tr>
-                    <td colSpan={7} className="p-3 text-center text-slate-500">No examination results recorded for this term.</td>
+                    <td colSpan={8} className="p-3 text-center text-slate-500">No examination or continuous assessment results recorded for this term.</td>
                   </tr>
                 )}
               </tbody>
               <tfoot>
                 <tr className="bg-slate-100 font-bold text-slate-900 border-t border-slate-300 text-[11px]">
-                  <td className="p-2" colSpan={4}>
+                  <td className="p-2" colSpan={5}>
                     <span className="uppercase tracking-wider text-[10px] text-slate-500 mr-2">Overall Performance:</span>
-                    {rows.length} Subjects Evaluated
+                    {completeRows.length} of {rows.length} Subjects Evaluated
                   </td>
                   <td className="p-2 text-center text-blue-700 font-extrabold">{avg.toFixed(1)}%</td>
                   <td className="p-2 text-center">
@@ -846,25 +915,114 @@ export default function ReportsView() {
   };
 
   return (
-    <>
-      <Card>
-        <h3 className="mt-0 text-xl font-bold">Generate Report Card</h3>
-        <p className="text-slate-500 mb-4">Generate the academic report or a dedicated AFL progress report.</p>
-        
-        <Select value={studentId} onChange={e => setStudentId(e.target.value)}>
-          {students.map(s => <option key={s.id} value={s.id}>{s.name} ({s.class})</option>)}
-        </Select>
-        {students.length === 0 && (
-          <p className="text-sm text-amber-600 mt-2">
-            No students found registered for your assigned class ({teacherClasses.join(', ') || 'No classes assigned'}).
-          </p>
-        )}
-        
-        <div className="flex gap-2 mt-4">
-          <Button onClick={() => generateReport('academic')}>Academic Report</Button>
-          <Button variant="secondary" onClick={() => generateReport('afl')}>AFL Report Card</Button>
-        </div>
-      </Card>
+    <div className="space-y-6">
+      {/* Top Report Category Tabs */}
+      <div className="bg-white p-2 rounded-2xl border border-slate-200 shadow-xs flex flex-wrap gap-1.5 items-center">
+        <button
+          type="button"
+          onClick={() => setActiveCategory('academic')}
+          className={`px-3.5 py-2 rounded-xl text-xs font-bold transition flex items-center gap-2 ${
+            activeCategory === 'academic' 
+              ? 'bg-slate-900 text-white shadow-xs' 
+              : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+          }`}
+        >
+          <span>📊</span> Academic Report Card
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveCategory('ca1')}
+          className={`px-3.5 py-2 rounded-xl text-xs font-bold transition flex items-center gap-2 ${
+            activeCategory === 'ca1' 
+              ? 'bg-blue-600 text-white shadow-xs' 
+              : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+          }`}
+        >
+          <span>📝</span> CA 1 Report Card (20)
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveCategory('ca2')}
+          className={`px-3.5 py-2 rounded-xl text-xs font-bold transition flex items-center gap-2 ${
+            activeCategory === 'ca2' 
+              ? 'bg-indigo-600 text-white shadow-xs' 
+              : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+          }`}
+        >
+          <span>📝</span> CA 2 Report Card (20)
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveCategory('caCombined')}
+          className={`px-3.5 py-2 rounded-xl text-xs font-bold transition flex items-center gap-2 ${
+            activeCategory === 'caCombined' 
+              ? 'bg-emerald-600 text-white shadow-xs' 
+              : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+          }`}
+        >
+          <span>📑</span> Combined CA Report (40)
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveCategory('afl')}
+          className={`px-3.5 py-2 rounded-xl text-xs font-bold transition flex items-center gap-2 ${
+            activeCategory === 'afl' 
+              ? 'bg-purple-600 text-white shadow-xs' 
+              : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+          }`}
+        >
+          <span>🎯</span> AFL Progress Report
+        </button>
+      </div>
+
+      {/* Render selected category */}
+      {activeCategory === 'ca1' && (
+        <CAReportCardView initialType="CA1" />
+      )}
+      {activeCategory === 'ca2' && (
+        <CAReportCardView initialType="CA2" />
+      )}
+      {activeCategory === 'caCombined' && (
+        <CAReportCardView initialType="Combined" />
+      )}
+      {(activeCategory === 'academic' || activeCategory === 'afl') && (
+        <>
+          <Card>
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3 border-b border-slate-100 gap-2 mb-4">
+              <div>
+                <h3 className="mt-0 text-xl font-bold text-slate-800">
+                  {activeCategory === 'academic' ? 'Terminal Academic Report Card' : 'AFL Formative Progress Report'}
+                </h3>
+                <p className="text-slate-500 text-xs m-0">
+                  {activeCategory === 'academic' 
+                    ? 'Collate CA1 (20), CA2 (20), and examination results into the official terminal grading card.'
+                    : 'Track formative classroom feedback, active learning competencies, and growth milestones.'}
+                </p>
+              </div>
+              <span className="text-xs px-2.5 py-1 rounded-full font-bold bg-slate-100 text-slate-700 w-fit">
+                {activeCategory === 'academic' ? 'Summative & CA' : 'Formative Matrix'}
+              </span>
+            </div>
+            
+            <Label className="text-xs font-bold text-slate-600 mb-1">Select Student to Generate / Preview</Label>
+            <Select value={studentId} onChange={e => setStudentId(e.target.value)}>
+              {students.map(s => <option key={s.id} value={s.id}>{s.name} ({s.class})</option>)}
+            </Select>
+            {students.length === 0 && (
+              <p className="text-sm text-amber-600 mt-2">
+                No students found registered for your assigned class ({teacherClasses.join(', ') || 'No classes assigned'}).
+              </p>
+            )}
+            
+            <div className="flex flex-wrap gap-2 mt-4">
+              <Button onClick={() => generateReport(activeCategory === 'afl' ? 'afl' : 'academic')}>
+                Preview & Edit {activeCategory === 'afl' ? 'AFL Report' : 'Academic Report'}
+              </Button>
+              <Button variant="secondary" onClick={() => setActiveCategory('ca1')}>CA 1 Report Card</Button>
+              <Button variant="secondary" onClick={() => setActiveCategory('ca2')}>CA 2 Report Card</Button>
+              <Button variant="secondary" onClick={() => setActiveCategory('caCombined')}>Combined CA Report</Button>
+            </div>
+          </Card>
       
       <Modal 
         isOpen={isReportOpen} 
@@ -1096,7 +1254,13 @@ export default function ReportsView() {
 
             {/* Section 2: Live High-Resolution Report Preview */}
             <div className="overflow-auto bg-slate-200/90 p-3 md:p-5 rounded-[14px] flex justify-center border border-slate-300 shadow-inner">
-              {reportKind === 'academic' ? renderAcademicReport() : renderAflReport()}
+              {reportKind === 'academic' && renderAcademicReport()}
+              {reportKind === 'afl' && renderAflReport()}
+              {(reportKind === 'ca1' || reportKind === 'ca2' || reportKind === 'caCombined') && (
+                <div className="w-full">
+                  <CAReportCardView initialType={reportKind === 'ca1' ? 'CA1' : reportKind === 'ca2' ? 'CA2' : 'Combined'} />
+                </div>
+              )}
             </div>
           </div>
 
@@ -1110,6 +1274,8 @@ export default function ReportsView() {
           </div>
         </div>
       </Modal>
-    </>
+        </>
+      )}
+    </div>
   );
 }

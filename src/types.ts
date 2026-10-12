@@ -139,6 +139,41 @@ export interface Attendance {
   percent: number;
 }
 
+export type AssessmentType = 'CA1' | 'CA2';
+export type AssessmentStatus = 'draft' | 'submitted' | 'locked';
+
+export interface AssessmentRecord {
+  id: string; // deterministic: `${studentId}_${subjectId}_${assessmentType}_${academicSessionId}_${termId}`
+  schoolId: string;
+  studentId: string;
+  studentUid?: string;
+  studentName?: string;
+  classId: string;
+  subjectId: string;
+  academicSessionId: string;
+  termId: string;
+  assessmentType: AssessmentType;
+  score: number; // 0 to 20
+  maximumScore: number; // 20
+  status: AssessmentStatus;
+  enteredBy: {
+    uid?: string;
+    id?: string;
+    name: string;
+    email?: string;
+    role: string;
+  };
+  enteredAt: string;
+  updatedBy?: {
+    uid?: string;
+    id?: string;
+    name: string;
+    email?: string;
+    role: string;
+  };
+  updatedAt?: string;
+}
+
 export interface AppData {
   students: Student[];
   teachers: Teacher[];
@@ -148,6 +183,7 @@ export interface AppData {
   results: Result[];
   attendance: Attendance[];
   questions: BankQuestion[];
+  assessments?: AssessmentRecord[];
 }
 
 export interface Branding {

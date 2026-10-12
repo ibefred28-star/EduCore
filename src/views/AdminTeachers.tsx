@@ -3,7 +3,7 @@ import { useStore } from '../store';
 import { useToastStore } from '../store/toast';
 import { Button, Input, Label, Modal, Select } from '../components/ui';
 import { CLASS_OPTIONS } from '../constants';
-import { UserService } from '../lib/auth/userService';
+import { AdminProvisioningService } from '../lib/auth/adminProvisioningService';
 
 export default function AdminTeachers() {
   const { data, updateData, schoolId } = useStore();
@@ -12,6 +12,7 @@ export default function AdminTeachers() {
   const [isOpen, setIsOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
   
   const [formData, setFormData] = useState({ id: '', name: '', password: '', subjects: [] as string[], classes: [] as string[], otherClass: '' });
 
@@ -20,19 +21,19 @@ export default function AdminTeachers() {
       const t = data.teachers.find(x => x.id === id);
       if (t) {
         const otherClass = t.classes.find(c => !CLASS_OPTIONS.includes(c)) || '';
-        setFormData({ id: t.id, name: t.name, password: t.password || '', subjects: t.subjects, classes: t.classes, otherClass });
+        setFormData({ id: t.id, name: t.name, password: '', subjects: t.subjects || [], classes: t.classes || [], otherClass });
       }
     } else {
-      setFormData({ id: '', name: '', password: 'pass', subjects: [], classes: [], otherClass: '' });
+      setFormData({ id: '', name: '', password: 'teacher123', subjects: [], classes: [], otherClass: '' });
     }
     setEditingId(id || null);
     setIsOpen(true);
   };
 
-  const saveTeacher = () => {
+  const saveTeacher = async () => {
     const trimmedId = formData.id.trim();
     const trimmedName = formData.name.trim();
-    if (!trimmedId || !trimmedName) return showToast('ID and Name are required');
+    if (!trimmedId || !trimmedName) return showToast('Teacher ID and Name are required');
     
     let finalClasses = [...formData.classes];
     if (formData.otherClass && !finalClasses.includes(formData.otherClass.trim())) {
@@ -51,41 +52,77 @@ export default function AdminTeachers() {
       }
     }
 
-    updateData(draft => {
-      if (editingId) {
-        const i = draft.teachers.findIndex(x => x.id === editingId);
-        if (i >= 0) draft.teachers[i] = { ...draft.teachers[i], id: trimmedId, name: trimmedName, password: formData.password || 'pass', subjects: formData.subjects, classes: finalClasses };
-      } else {
-        draft.teachers.push({ id: trimmedId, name: trimmedName, password: formData.password || 'pass', subjects: formData.subjects, classes: finalClasses });
+    const trimmedPassword = formData.password.trim();
+    if (!editingId && trimmedPassword.length < 6) {
+      return showToast('Password must be at least 6 characters long');
+    }
+
+    setIsSaving(true);
+    try {
+      // 1. Authoritatively provision teacher account in Firebase Authentication & Firestore
+      const provRes = await AdminProvisioningService.provisionTeacher({
+        schoolId: schoolId || 'default',
+        teacherId: trimmedId,
+        teacherName: trimmedName,
+        password: trimmedPassword || 'teacher123',
+        subjects: formData.subjects || [],
+        classes: finalClasses,
+        photo: ''
+      });
+
+      if (!provRes.success) {
+        showToast(provRes.error || 'Failed to provision teacher account in Firebase Auth');
+        setIsSaving(false);
+        return;
       }
-    });
 
-    // Establish authoritative user profile in Firestore
-    UserService.upsertUserProfile(schoolId || 'global', {
-      uid: 'pending_' + trimmedId,
-      username: trimmedId,
-      name: trimmedName,
-      email: `${schoolId || 'school'}.teacher.${trimmedId}@educore.internal`,
-      role: 'teacher',
-      classes: finalClasses,
-      status: 'active'
-    }).catch(console.warn);
+      // 2. Persist in local roster without plaintext passwords
+      updateData(draft => {
+        if (editingId) {
+          const i = draft.teachers.findIndex(x => x.id === editingId);
+          if (i >= 0) draft.teachers[i] = { ...draft.teachers[i], id: trimmedId, name: trimmedName, subjects: formData.subjects, classes: finalClasses };
+        } else {
+          draft.teachers.push({ id: trimmedId, name: trimmedName, subjects: formData.subjects, classes: finalClasses });
+        }
+      });
 
-    showToast('Teacher saved');
-    setIsOpen(false);
+      showToast(editingId ? 'Teacher updated successfully' : 'Teacher account created and authentication ready');
+      setIsOpen(false);
+    } catch (err: any) {
+      showToast(err.message || 'Error saving teacher');
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   const deleteTeacher = (id: string) => {
     setDeleteConfirm(id);
   };
 
-  const confirmDelete = () => {
-    if (deleteConfirm) {
+  const confirmDelete = async () => {
+    if (!deleteConfirm) return;
+    setIsSaving(true);
+    try {
+      const res = await AdminProvisioningService.deleteTeacher({
+        schoolId: schoolId || 'default',
+        teacherId: deleteConfirm
+      });
+
+      if (!res.success) {
+        showToast(res.error || 'Failed to delete teacher account from Firebase');
+        setIsSaving(false);
+        return;
+      }
+
       updateData(draft => {
         draft.teachers = draft.teachers.filter(t => t.id !== deleteConfirm);
       });
-      showToast('Teacher deleted');
+      showToast('Teacher deleted and login access revoked');
       setDeleteConfirm(null);
+    } catch (err: any) {
+      showToast(err.message || 'Error deleting teacher');
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -221,8 +258,10 @@ export default function AdminTeachers() {
         </div>
         
         <div className="flex gap-2 mt-5">
-          <Button onClick={saveTeacher}>Save</Button>
-          <Button variant="secondary" onClick={() => setIsOpen(false)}>Cancel</Button>
+          <Button onClick={saveTeacher} disabled={isSaving}>
+            {isSaving ? 'Saving...' : 'Save'}
+          </Button>
+          <Button variant="secondary" onClick={() => setIsOpen(false)} disabled={isSaving}>Cancel</Button>
         </div>
       </Modal>
 
@@ -232,8 +271,10 @@ export default function AdminTeachers() {
             <h3 className="text-xl font-bold mb-2">Delete Teacher?</h3>
             <p className="text-slate-500 mb-6">Are you sure you want to delete this teacher profile?</p>
             <div className="flex gap-3 justify-center">
-              <Button variant="secondary" onClick={() => setDeleteConfirm(null)}>Cancel</Button>
-              <Button variant="danger" onClick={confirmDelete}>Yes, Delete</Button>
+              <Button variant="secondary" onClick={() => setDeleteConfirm(null)} disabled={isSaving}>Cancel</Button>
+              <Button variant="danger" onClick={confirmDelete} disabled={isSaving}>
+                {isSaving ? 'Deleting...' : 'Yes, Delete'}
+              </Button>
             </div>
           </div>
         </div>

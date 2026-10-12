@@ -17,6 +17,8 @@ export interface AuthenticatedUser {
   role: Role | 'superadmin';
   userId: string;
   displayName: string;
+  classes?: string[];
+  class?: string;
 }
 
 /**

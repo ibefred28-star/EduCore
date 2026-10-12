@@ -1,16 +1,17 @@
 import { create } from 'zustand';
-import { AppData, Branding, Config, Role, SyncConfig, Tenant, User } from './types';
-import { DEFAULT_BRANDING, DEFAULT_CONFIG, DEFAULT_DATA } from './constants';
+import { AppData, AssessmentRecord, Branding, Config, Role, SyncConfig, Tenant, User } from './types';
+import { DEFAULT_BRANDING, DEFAULT_CONFIG, DEFAULT_DATA, EMPTY_SCHOOL_DATA } from './constants';
 import { db } from './firebase';
-import { doc, onSnapshot, setDoc, getDoc, runTransaction } from 'firebase/firestore';
+import { doc, onSnapshot, setDoc, getDoc, runTransaction, deleteDoc } from 'firebase/firestore';
 import { isStudentInTeacherClasses } from './lib/classUtils';
 import { AuthService, LegacyAccountChecker } from './lib/auth/authService';
 import { ExamRepository } from './lib/firestore/repositories/examRepository';
+import { AssessmentRepository } from './lib/firestore/repositories/assessmentRepository';
 
 const SYNC = 'educore_sync_v1';
 
-function sanitizeState(incoming: AppData): AppData {
-  if (!incoming) return DEFAULT_DATA;
+function sanitizeState(incoming: AppData, fallback: AppData = EMPTY_SCHOOL_DATA): AppData {
+  if (!incoming) return JSON.parse(JSON.stringify(fallback));
   const copy = { ...incoming };
   
   if (!Array.isArray(copy.students)) copy.students = [];
@@ -19,6 +20,9 @@ function sanitizeState(incoming: AppData): AppData {
   if (!Array.isArray(copy.attendance)) copy.attendance = [];
   if (!Array.isArray(copy.exams)) copy.exams = [];
   if (!Array.isArray(copy.questions)) copy.questions = [];
+  if (!Array.isArray(copy.admins)) copy.admins = [];
+  if (!Array.isArray(copy.subjects)) copy.subjects = fallback.subjects || ['Mathematics', 'English Language', 'Basic Science & Technology'];
+  if (!Array.isArray(copy.assessments)) copy.assessments = fallback.assessments || [];
 
   return copy;
 }
@@ -38,6 +42,7 @@ interface StoreState {
   // Internal tracking
   unsubscribeSnapshot: (() => void) | null;
   unsubscribeTenants: (() => void) | null;
+  unsubscribeAssessments: (() => void) | null;
   
   // Actions
   setSchoolId: (id: string | null) => void;
@@ -45,6 +50,8 @@ interface StoreState {
   loginSuperAdmin: (pass: string) => Promise<{ success: boolean; error?: string }>;
   logout: () => Promise<void>;
   updateData: (updater: (draft: AppData) => AppData | void) => void;
+  saveAssessment: (record: AssessmentRecord) => Promise<void>;
+  saveBatchAssessments: (records: AssessmentRecord[]) => Promise<void>;
   updateBranding: (branding: Branding) => void;
   updateConfig: (config: Config) => void;
   updateSyncConfig: (syncConfig: SyncConfig | null) => void;
@@ -68,6 +75,7 @@ export const useStore = create<StoreState>((set, get) => {
   const DATA_KEY = initialSchoolId ? `educore_data_${initialSchoolId}` : 'educore_data_v2';
   const BRAND_KEY = initialSchoolId ? `educore_brand_${initialSchoolId}` : 'educore_brand_v2';
   const CONFIG_KEY = initialSchoolId ? `educore_config_${initialSchoolId}` : 'educore_config_v2';
+  const initialFallback = initialSchoolId === 'demo' ? DEFAULT_DATA : EMPTY_SCHOOL_DATA;
 
   return {
     schoolId: initialSchoolId,
@@ -75,13 +83,14 @@ export const useStore = create<StoreState>((set, get) => {
     currentRole: null,
     authLoading: true,
     activeExamId: null,
-    data: sanitizeState(safeParse<AppData>(DATA_KEY, DEFAULT_DATA)),
+    data: sanitizeState(safeParse<AppData>(DATA_KEY, initialFallback), initialFallback),
     branding: safeParse<Branding>(BRAND_KEY, DEFAULT_BRANDING),
     config: safeParse<Config>(CONFIG_KEY, DEFAULT_CONFIG),
     syncConfig: safeParse<SyncConfig | null>(SYNC, { enabled: true } as any),
     globalTenants: [],
     unsubscribeSnapshot: null,
     unsubscribeTenants: null,
+    unsubscribeAssessments: null,
 
     setSchoolId: (id) => {
       if (id) {
@@ -89,10 +98,11 @@ export const useStore = create<StoreState>((set, get) => {
         const DATA_KEY = `educore_data_${id}`;
         const BRAND_KEY = `educore_brand_${id}`;
         const CONFIG_KEY = `educore_config_${id}`;
+        const schoolFallback = id === 'demo' ? DEFAULT_DATA : EMPTY_SCHOOL_DATA;
         
         set({
           schoolId: id,
-          data: sanitizeState(safeParse<AppData>(DATA_KEY, DEFAULT_DATA)),
+          data: sanitizeState(safeParse<AppData>(DATA_KEY, schoolFallback), schoolFallback),
           branding: safeParse<Branding>(BRAND_KEY, DEFAULT_BRANDING),
           config: safeParse<Config>(CONFIG_KEY, DEFAULT_CONFIG)
         });
@@ -102,7 +112,9 @@ export const useStore = create<StoreState>((set, get) => {
         set({ schoolId: null, currentUser: null, currentRole: null });
         const unsub = get().unsubscribeSnapshot;
         if (unsub) unsub();
-        set({ unsubscribeSnapshot: null });
+        const unsubA = get().unsubscribeAssessments;
+        if (unsubA) unsubA();
+        set({ unsubscribeSnapshot: null, unsubscribeAssessments: null });
       }
     },
 
@@ -122,9 +134,9 @@ export const useStore = create<StoreState>((set, get) => {
       // Legacy checker callback to enable seamless migration of initial roster accounts
       const legacyChecker: LegacyAccountChecker = (schId, targetRole, uId, userPass) => {
         const data = get().data;
-        const students = data.students || DEFAULT_DATA.students;
-        const teachers = data.teachers || DEFAULT_DATA.teachers;
-        const admins = data.admins || DEFAULT_DATA.admins;
+        const students = data.students || [];
+        const teachers = data.teachers || [];
+        const admins = data.admins || [];
         const cleanId = uId.toLowerCase();
 
         // Check if ID exists in a different role to prevent role confusion
@@ -177,14 +189,14 @@ export const useStore = create<StoreState>((set, get) => {
         const existingStudent = data.students?.find(s => s.id.toLowerCase() === authenticatedUser.userId.toLowerCase());
         enrichedUser = {
           ...enrichedUser,
-          class: existingStudent?.class || 'Primary 5',
+          class: existingStudent?.class || authenticatedUser.class || authenticatedUser.classes?.[0] || 'Primary 5',
           photo: existingStudent?.photo || ''
         };
       } else if (role === 'teacher') {
         const existingTeacher = data.teachers?.find(t => t.id.toLowerCase() === authenticatedUser.userId.toLowerCase());
         enrichedUser = {
           ...enrichedUser,
-          classes: existingTeacher?.classes || ['Primary 5'],
+          classes: existingTeacher?.classes || authenticatedUser.classes || ['Primary 5'],
           subjects: existingTeacher?.subjects || ['Math']
         };
       }
@@ -230,15 +242,48 @@ export const useStore = create<StoreState>((set, get) => {
       
       const unsubT = get().unsubscribeTenants;
       if (unsubT) unsubT();
+
+      const unsubA = get().unsubscribeAssessments;
+      if (unsubA) unsubA();
       
       set({
         currentUser: null,
         currentRole: null,
         unsubscribeSnapshot: null,
         unsubscribeTenants: null,
+        unsubscribeAssessments: null,
         authLoading: false
       });
       // We don't clear schoolId on logout so they stay on the school's login page unless they were superadmin
+    },
+
+    saveBatchAssessments: async (records: AssessmentRecord[]) => {
+      const state = get();
+      if (!state.schoolId || records.length === 0) return;
+
+      // 1. Optimistically update local state & localStorage
+      get().updateData((draft) => {
+        if (!draft.assessments) draft.assessments = [];
+        for (const rec of records) {
+          const idx = draft.assessments.findIndex(a => a.id === rec.id);
+          if (idx >= 0) {
+            draft.assessments[idx] = { ...draft.assessments[idx], ...rec };
+          } else {
+            draft.assessments.push(rec);
+          }
+        }
+      });
+
+      // 2. Persist to dedicated Firestore collection: schools/{schoolId}/assessments/{assessmentId}
+      try {
+        await AssessmentRepository.saveBatchAssessments(state.schoolId, records);
+      } catch (err) {
+        console.warn('Persisting assessments to Firestore subcollection notice:', err);
+      }
+    },
+
+    saveAssessment: async (record: AssessmentRecord) => {
+      await get().saveBatchAssessments([record]);
     },
 
     updateData: (updater) => {
@@ -351,7 +396,8 @@ export const useStore = create<StoreState>((set, get) => {
           if (snapshot.exists()) {
             const serverData = snapshot.data();
             if (serverData.state) {
-              const sanitized = sanitizeState(serverData.state);
+              const fallback = state.schoolId === 'demo' ? DEFAULT_DATA : EMPTY_SCHOOL_DATA;
+              const sanitized = sanitizeState(serverData.state, fallback);
               localStorage.setItem(`educore_data_${state.schoolId}`, JSON.stringify(sanitized));
               set({ data: sanitized });
 
@@ -385,30 +431,33 @@ export const useStore = create<StoreState>((set, get) => {
               set({ config: serverData.config });
             }
           } else {
-            // Push defaults for a newly entered, empty school
-            setDoc(docRef, {
-              state: state.data,
-              branding: state.branding,
-              config: state.config,
-              updatedAt: new Date().toISOString()
-            }, { merge: true });
+            // ONLY if school is demo, allow seeding defaults into Firestore
+              setDoc(docRef, {
+                state: state.data,
+                branding: state.branding,
+                config: state.config,
+                updatedAt: new Date().toISOString()
+              }, { merge: true }).catch((err) => {
+                console.warn('Demo setDoc sync warning:', err);
+              });
 
-            // Seed confidential exam keys for default exams
-            state.data.exams.forEach(ex => {
-              ExamRepository.saveExamWithAnswerKeys(state.schoolId!, {
-                id: ex.id,
-                title: ex.title,
-                subject: ex.subject,
-                type: ex.type,
-                duration: ex.duration,
-                attempts: ex.attempts || 1,
-                status: ex.status,
-                targetClasses: ex.targetClasses || [],
-                createdBy: ex.createdBy,
-                rawQuestions: ex.questions
-              }).catch(() => {});
-            });
-          }
+              state.data.exams.forEach(ex => {
+                ExamRepository.saveExamWithAnswerKeys(state.schoolId!, {
+                  id: ex.id,
+                  title: ex.title,
+                  subject: ex.subject,
+                  type: ex.type,
+                  duration: ex.duration,
+                  attempts: ex.attempts || 1,
+                  status: ex.status,
+                  targetClasses: ex.targetClasses || [],
+                  createdBy: ex.createdBy,
+                  rawQuestions: ex.questions
+                }).catch(() => {});
+              });
+            }
+        }).catch((err) => {
+          console.warn('Initial getDoc sync warning:', err);
         });
         
         // Setup snapshot listener
@@ -416,7 +465,8 @@ export const useStore = create<StoreState>((set, get) => {
           if (snapshot.exists()) {
             const serverData = snapshot.data();
             if (serverData.state) {
-              const sanitized = sanitizeState(serverData.state);
+              const fallback = state.schoolId === 'demo' ? DEFAULT_DATA : EMPTY_SCHOOL_DATA;
+              const sanitized = sanitizeState(serverData.state, fallback);
               localStorage.setItem(`educore_data_${state.schoolId}`, JSON.stringify(sanitized));
               set({ data: sanitized });
 
@@ -455,6 +505,29 @@ export const useStore = create<StoreState>((set, get) => {
         });
         
         set({ unsubscribeSnapshot: unsub });
+
+        // Realtime sync from dedicated assessments subcollection
+        try {
+          const unsubAssessments = AssessmentRepository.subscribeAssessments(state.schoolId, (records) => {
+            if (records && records.length > 0) {
+              set(curr => {
+                const existing = curr.data.assessments || [];
+                const map = new Map<string, AssessmentRecord>();
+                existing.forEach(a => map.set(a.id, a));
+                records.forEach(r => map.set(r.id, r));
+                const merged = Array.from(map.values());
+                const updatedData = { ...curr.data, assessments: merged };
+                if (curr.schoolId) {
+                  localStorage.setItem(`educore_data_${curr.schoolId}`, JSON.stringify(updatedData));
+                }
+                return { data: updatedData };
+              });
+            }
+          });
+          set({ unsubscribeAssessments: unsubAssessments });
+        } catch (e) {
+          console.warn('Assessments subscription setup error:', e);
+        }
       } catch (e) {
         console.warn('Online sync unavailable', e);
       }
@@ -483,11 +556,11 @@ export const useStore = create<StoreState>((set, get) => {
           t.set(tenantsRef, { tenants }, { merge: true });
         });
         
-        // Setup initial default document for this new school
+        // Setup initial clean document for this new school
         const newSchoolRef = doc(db, 'app_state', cleanId);
         
-        const initialData = JSON.parse(JSON.stringify(DEFAULT_DATA));
-        initialData.admins = [{ id: adminId, name: 'Initial Admin', password: adminPass }];
+        const initialData = JSON.parse(JSON.stringify(EMPTY_SCHOOL_DATA));
+        initialData.admins = [{ id: adminId, name: `Admin (${name})` }];
         
         const initialBranding = JSON.parse(JSON.stringify(DEFAULT_BRANDING));
         initialBranding.schoolName = name;
@@ -497,22 +570,6 @@ export const useStore = create<StoreState>((set, get) => {
           branding: initialBranding,
           config: DEFAULT_CONFIG,
           updatedAt: new Date().toISOString()
-        });
-
-        // Seed confidential exam keys for default exams
-        initialData.exams.forEach((ex: any) => {
-          ExamRepository.saveExamWithAnswerKeys(cleanId, {
-            id: ex.id,
-            title: ex.title,
-            subject: ex.subject,
-            type: ex.type,
-            duration: ex.duration,
-            attempts: ex.attempts || 1,
-            status: ex.status,
-            targetClasses: ex.targetClasses || [],
-            createdBy: ex.createdBy,
-            rawQuestions: ex.questions
-          }).catch(() => {});
         });
         
         return { success: true };
@@ -530,6 +587,7 @@ export const useStore = create<StoreState>((set, get) => {
       if (state.currentRole !== 'superadmin') return false;
       
       try {
+        const cleanId = id.trim().toLowerCase();
         const tenantsRef = doc(db, 'app_state', 'GLOBAL_TENANTS');
         await runTransaction(db, async (t) => {
           const snap = await t.get(tenantsRef);
@@ -537,9 +595,16 @@ export const useStore = create<StoreState>((set, get) => {
           if (snap.exists() && snap.data().tenants) {
             tenants = snap.data().tenants;
           }
-          tenants = tenants.filter(t => t.id !== id);
+          tenants = tenants.filter(t => t.id !== cleanId);
           t.set(tenantsRef, { tenants }, { merge: true });
         });
+
+        // Also clean up remote app_state and local cache
+        const schoolDocRef = doc(db, 'app_state', cleanId);
+        await deleteDoc(schoolDocRef).catch(console.warn);
+        localStorage.removeItem(`educore_data_${cleanId}`);
+        localStorage.removeItem(`educore_brand_${cleanId}`);
+        localStorage.removeItem(`educore_config_${cleanId}`);
         return true;
       } catch (e) {
         console.error("Failed to delete tenant:", e);

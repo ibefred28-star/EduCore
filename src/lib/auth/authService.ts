@@ -159,6 +159,24 @@ export const AuthService = {
       const userCredential = await signInWithEmailAndPassword(auth, email, trimmedPass);
       const fbUser = userCredential.user;
 
+      // Authoritative token claims check to prevent cross-school or cross-role access
+      const idTokenResult = await fbUser.getIdTokenResult();
+      const claims = idTokenResult.claims;
+      
+      const cleanSchool = schoolId.trim().toLowerCase().replace(/[^a-z0-9_-]/g, '');
+      const assignedSchool = (claims.schoolId as string || '').toLowerCase();
+      if (assignedSchool && assignedSchool !== cleanSchool && claims.role !== 'superadmin') {
+        await firebaseSignOut(auth);
+        return { user: null, error: 'Access denied: This account belongs to a different school institution.' };
+      }
+
+      const assignedRole = (claims.role as string || '').toLowerCase();
+      if (assignedRole && assignedRole !== role && claims.role !== 'superadmin') {
+        await firebaseSignOut(auth);
+        const roleLabel = assignedRole === 'admin' ? 'School Administrator' : assignedRole === 'teacher' ? 'Teacher' : 'Student';
+        return { user: null, error: `ID "${trimmedId}" is registered as a ${roleLabel}. Please select "${roleLabel}" in the Role dropdown.` };
+      }
+
       // Authoritative profile validation
       let profile = await UserService.getUserProfile(schoolId, trimmedId);
       if (profile && profile.status === 'disabled') {
@@ -174,6 +192,7 @@ export const AuthService = {
           name: fbUser.displayName || trimmedId,
           email,
           role,
+          classes: (claims.classes as string[]) || [],
           status: 'active'
         });
       }
@@ -193,7 +212,9 @@ export const AuthService = {
           schoolId,
           role: profile.role || role,
           userId: trimmedId,
-          displayName: profile.name || trimmedId
+          displayName: profile.name || trimmedId,
+          classes: profile.classes || (claims.classes as string[]) || [],
+          class: profile.classes?.[0] || (claims.classes as string[])?.[0] || undefined
         }
       };
     } catch (err: any) {

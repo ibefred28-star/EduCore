@@ -93,7 +93,8 @@ export default function AdminStudents() {
         studentName: cleanStudent.name,
         studentClass: cleanStudent.class,
         password: trimmedPass || 'student123',
-        photo: cleanStudent.photo
+        photo: cleanStudent.photo,
+        isUpdate: Boolean(editingId)
       });
 
       if (!provRes.success) {

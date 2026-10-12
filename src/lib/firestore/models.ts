@@ -197,3 +197,35 @@ export interface FirestoreAnnouncementDoc {
   createdBy: string;
   createdAt: string;
 }
+
+export interface FirestoreAssessmentDoc {
+  id: string;
+  schoolId: string;
+  studentId: string;
+  studentUid?: string;
+  studentName?: string;
+  classId: string;
+  subjectId: string;
+  academicSessionId: string;
+  termId: string;
+  assessmentType: 'CA1' | 'CA2';
+  score: number;
+  maximumScore: number;
+  status: 'draft' | 'submitted' | 'locked';
+  enteredBy: {
+    uid?: string;
+    id?: string;
+    name: string;
+    email?: string;
+    role: string;
+  };
+  enteredAt: string;
+  updatedBy?: {
+    uid?: string;
+    id?: string;
+    name: string;
+    email?: string;
+    role: string;
+  };
+  updatedAt?: string;
+}

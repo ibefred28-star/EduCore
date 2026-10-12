@@ -27,6 +27,18 @@ export const DEFAULT_CONFIG: Config = {
   ]
 };
 
+export const EMPTY_SCHOOL_DATA: AppData = {
+  students: [],
+  teachers: [],
+  admins: [],
+  subjects: ['Mathematics', 'English Language', 'Basic Science & Technology'],
+  exams: [],
+  results: [],
+  attendance: [],
+  questions: [],
+  assessments: []
+};
+
 export const DEFAULT_DATA: AppData = {
   students: [
     { id: 'STU001', name: 'Aisha Bello', class: 'Primary 5', password: 'pass', photo: '' },
@@ -37,11 +49,11 @@ export const DEFAULT_DATA: AppData = {
     { id: 'STU006', name: 'David Adeleke', class: 'JSS2', password: 'pass', photo: '' }
   ],
   teachers: [
-    { id: 'teacher1', name: 'Mr. Okafor', password: 'pass', subjects: ['Math', 'English', 'Basic Science'], classes: ['Primary 5'] },
+    { id: 'teacher1', name: 'Mr. Okafor', password: 'pass', subjects: ['Math', 'English', 'Basic Science', 'Nigerian History'], classes: ['Primary 5'] },
     { id: 'teacher2', name: 'Mrs. Adewale', password: 'pass', subjects: ['Math'], classes: ['JSS2'] }
   ],
   admins: [{ id: 'admin', name: 'Administrator', password: 'admin' }],
-  subjects: ['Math', 'English', 'Basic Science'],
+  subjects: ['Math', 'English', 'Basic Science', 'Nigerian History'],
   exams: [
     {
       id: 'EXAM1',
@@ -318,6 +330,48 @@ export const DEFAULT_DATA: AppData = {
       updatedAt: '2026-09-07T12:00:00.000Z',
       status: 'active'
     }
+  ],
+  assessments: [
+    // STU001 - Aisha Bello (Matches prompt illustrative example: English 16/18, Math 14/17, Basic Science 18/15, Nigerian History 12/16)
+    { id: 'stu001_english_ca1_2026_2027_first_term', schoolId: 'demo', studentId: 'STU001', studentName: 'Aisha Bello', classId: 'Primary 5', subjectId: 'English', academicSessionId: '2026/2027', termId: 'First Term', assessmentType: 'CA1', score: 16, maximumScore: 20, status: 'submitted', enteredBy: { id: 'teacher1', name: 'Mr. Okafor', role: 'teacher' }, enteredAt: '2026-09-20T10:00:00.000Z' },
+    { id: 'stu001_english_ca2_2026_2027_first_term', schoolId: 'demo', studentId: 'STU001', studentName: 'Aisha Bello', classId: 'Primary 5', subjectId: 'English', academicSessionId: '2026/2027', termId: 'First Term', assessmentType: 'CA2', score: 18, maximumScore: 20, status: 'submitted', enteredBy: { id: 'teacher1', name: 'Mr. Okafor', role: 'teacher' }, enteredAt: '2026-10-04T09:30:00.000Z' },
+
+    { id: 'stu001_math_ca1_2026_2027_first_term', schoolId: 'demo', studentId: 'STU001', studentName: 'Aisha Bello', classId: 'Primary 5', subjectId: 'Math', academicSessionId: '2026/2027', termId: 'First Term', assessmentType: 'CA1', score: 14, maximumScore: 20, status: 'submitted', enteredBy: { id: 'teacher1', name: 'Mr. Okafor', role: 'teacher' }, enteredAt: '2026-09-18T10:00:00.000Z' },
+    { id: 'stu001_math_ca2_2026_2027_first_term', schoolId: 'demo', studentId: 'STU001', studentName: 'Aisha Bello', classId: 'Primary 5', subjectId: 'Math', academicSessionId: '2026/2027', termId: 'First Term', assessmentType: 'CA2', score: 17, maximumScore: 20, status: 'submitted', enteredBy: { id: 'teacher1', name: 'Mr. Okafor', role: 'teacher' }, enteredAt: '2026-10-02T10:00:00.000Z' },
+
+    { id: 'stu001_basic_science_ca1_2026_2027_first_term', schoolId: 'demo', studentId: 'STU001', studentName: 'Aisha Bello', classId: 'Primary 5', subjectId: 'Basic Science', academicSessionId: '2026/2027', termId: 'First Term', assessmentType: 'CA1', score: 18, maximumScore: 20, status: 'submitted', enteredBy: { id: 'teacher1', name: 'Mr. Okafor', role: 'teacher' }, enteredAt: '2026-09-26T11:15:00.000Z' },
+    { id: 'stu001_basic_science_ca2_2026_2027_first_term', schoolId: 'demo', studentId: 'STU001', studentName: 'Aisha Bello', classId: 'Primary 5', subjectId: 'Basic Science', academicSessionId: '2026/2027', termId: 'First Term', assessmentType: 'CA2', score: 15, maximumScore: 20, status: 'submitted', enteredBy: { id: 'teacher1', name: 'Mr. Okafor', role: 'teacher' }, enteredAt: '2026-10-06T11:15:00.000Z' },
+
+    { id: 'stu001_nigerian_history_ca1_2026_2027_first_term', schoolId: 'demo', studentId: 'STU001', studentName: 'Aisha Bello', classId: 'Primary 5', subjectId: 'Nigerian History', academicSessionId: '2026/2027', termId: 'First Term', assessmentType: 'CA1', score: 12, maximumScore: 20, status: 'submitted', enteredBy: { id: 'teacher1', name: 'Mr. Okafor', role: 'teacher' }, enteredAt: '2026-09-28T09:00:00.000Z' },
+    { id: 'stu001_nigerian_history_ca2_2026_2027_first_term', schoolId: 'demo', studentId: 'STU001', studentName: 'Aisha Bello', classId: 'Primary 5', subjectId: 'Nigerian History', academicSessionId: '2026/2027', termId: 'First Term', assessmentType: 'CA2', score: 16, maximumScore: 20, status: 'submitted', enteredBy: { id: 'teacher1', name: 'Mr. Okafor', role: 'teacher' }, enteredAt: '2026-10-07T09:00:00.000Z' },
+
+    // STU002 - Chukwudi Eze
+    { id: 'stu002_english_ca1_2026_2027_first_term', schoolId: 'demo', studentId: 'STU002', studentName: 'Chukwudi Eze', classId: 'Primary 5', subjectId: 'English', academicSessionId: '2026/2027', termId: 'First Term', assessmentType: 'CA1', score: 15, maximumScore: 20, status: 'submitted', enteredBy: { id: 'teacher1', name: 'Mr. Okafor', role: 'teacher' }, enteredAt: '2026-09-20T10:00:00.000Z' },
+    { id: 'stu002_english_ca2_2026_2027_first_term', schoolId: 'demo', studentId: 'STU002', studentName: 'Chukwudi Eze', classId: 'Primary 5', subjectId: 'English', academicSessionId: '2026/2027', termId: 'First Term', assessmentType: 'CA2', score: 16, maximumScore: 20, status: 'submitted', enteredBy: { id: 'teacher1', name: 'Mr. Okafor', role: 'teacher' }, enteredAt: '2026-10-04T09:30:00.000Z' },
+    { id: 'stu002_math_ca1_2026_2027_first_term', schoolId: 'demo', studentId: 'STU002', studentName: 'Chukwudi Eze', classId: 'Primary 5', subjectId: 'Math', academicSessionId: '2026/2027', termId: 'First Term', assessmentType: 'CA1', score: 13, maximumScore: 20, status: 'submitted', enteredBy: { id: 'teacher1', name: 'Mr. Okafor', role: 'teacher' }, enteredAt: '2026-09-18T10:00:00.000Z' },
+    { id: 'stu002_math_ca2_2026_2027_first_term', schoolId: 'demo', studentId: 'STU002', studentName: 'Chukwudi Eze', classId: 'Primary 5', subjectId: 'Math', academicSessionId: '2026/2027', termId: 'First Term', assessmentType: 'CA2', score: 15, maximumScore: 20, status: 'submitted', enteredBy: { id: 'teacher1', name: 'Mr. Okafor', role: 'teacher' }, enteredAt: '2026-10-02T10:00:00.000Z' },
+    { id: 'stu002_basic_science_ca1_2026_2027_first_term', schoolId: 'demo', studentId: 'STU002', studentName: 'Chukwudi Eze', classId: 'Primary 5', subjectId: 'Basic Science', academicSessionId: '2026/2027', termId: 'First Term', assessmentType: 'CA1', score: 14, maximumScore: 20, status: 'submitted', enteredBy: { id: 'teacher1', name: 'Mr. Okafor', role: 'teacher' }, enteredAt: '2026-09-26T11:15:00.000Z' },
+    { id: 'stu002_basic_science_ca2_2026_2027_first_term', schoolId: 'demo', studentId: 'STU002', studentName: 'Chukwudi Eze', classId: 'Primary 5', subjectId: 'Basic Science', academicSessionId: '2026/2027', termId: 'First Term', assessmentType: 'CA2', score: 16, maximumScore: 20, status: 'submitted', enteredBy: { id: 'teacher1', name: 'Mr. Okafor', role: 'teacher' }, enteredAt: '2026-10-06T11:15:00.000Z' },
+    { id: 'stu002_nigerian_history_ca1_2026_2027_first_term', schoolId: 'demo', studentId: 'STU002', studentName: 'Chukwudi Eze', classId: 'Primary 5', subjectId: 'Nigerian History', academicSessionId: '2026/2027', termId: 'First Term', assessmentType: 'CA1', score: 14, maximumScore: 20, status: 'submitted', enteredBy: { id: 'teacher1', name: 'Mr. Okafor', role: 'teacher' }, enteredAt: '2026-09-28T09:00:00.000Z' },
+    { id: 'stu002_nigerian_history_ca2_2026_2027_first_term', schoolId: 'demo', studentId: 'STU002', studentName: 'Chukwudi Eze', classId: 'Primary 5', subjectId: 'Nigerian History', academicSessionId: '2026/2027', termId: 'First Term', assessmentType: 'CA2', score: 15, maximumScore: 20, status: 'submitted', enteredBy: { id: 'teacher1', name: 'Mr. Okafor', role: 'teacher' }, enteredAt: '2026-10-07T09:00:00.000Z' },
+
+    // STU003 - Fatima Ibrahim (High performer: 19s and 20s)
+    { id: 'stu003_english_ca1_2026_2027_first_term', schoolId: 'demo', studentId: 'STU003', studentName: 'Fatima Ibrahim', classId: 'Primary 5', subjectId: 'English', academicSessionId: '2026/2027', termId: 'First Term', assessmentType: 'CA1', score: 19, maximumScore: 20, status: 'submitted', enteredBy: { id: 'teacher1', name: 'Mr. Okafor', role: 'teacher' }, enteredAt: '2026-09-20T10:00:00.000Z' },
+    { id: 'stu003_english_ca2_2026_2027_first_term', schoolId: 'demo', studentId: 'STU003', studentName: 'Fatima Ibrahim', classId: 'Primary 5', subjectId: 'English', academicSessionId: '2026/2027', termId: 'First Term', assessmentType: 'CA2', score: 19, maximumScore: 20, status: 'submitted', enteredBy: { id: 'teacher1', name: 'Mr. Okafor', role: 'teacher' }, enteredAt: '2026-10-04T09:30:00.000Z' },
+    { id: 'stu003_math_ca1_2026_2027_first_term', schoolId: 'demo', studentId: 'STU003', studentName: 'Fatima Ibrahim', classId: 'Primary 5', subjectId: 'Math', academicSessionId: '2026/2027', termId: 'First Term', assessmentType: 'CA1', score: 20, maximumScore: 20, status: 'submitted', enteredBy: { id: 'teacher1', name: 'Mr. Okafor', role: 'teacher' }, enteredAt: '2026-09-18T10:00:00.000Z' },
+    { id: 'stu003_math_ca2_2026_2027_first_term', schoolId: 'demo', studentId: 'STU003', studentName: 'Fatima Ibrahim', classId: 'Primary 5', subjectId: 'Math', academicSessionId: '2026/2027', termId: 'First Term', assessmentType: 'CA2', score: 20, maximumScore: 20, status: 'submitted', enteredBy: { id: 'teacher1', name: 'Mr. Okafor', role: 'teacher' }, enteredAt: '2026-10-02T10:00:00.000Z' },
+    { id: 'stu003_basic_science_ca1_2026_2027_first_term', schoolId: 'demo', studentId: 'STU003', studentName: 'Fatima Ibrahim', classId: 'Primary 5', subjectId: 'Basic Science', academicSessionId: '2026/2027', termId: 'First Term', assessmentType: 'CA1', score: 20, maximumScore: 20, status: 'submitted', enteredBy: { id: 'teacher1', name: 'Mr. Okafor', role: 'teacher' }, enteredAt: '2026-09-26T11:15:00.000Z' },
+    { id: 'stu003_basic_science_ca2_2026_2027_first_term', schoolId: 'demo', studentId: 'STU003', studentName: 'Fatima Ibrahim', classId: 'Primary 5', subjectId: 'Basic Science', academicSessionId: '2026/2027', termId: 'First Term', assessmentType: 'CA2', score: 19, maximumScore: 20, status: 'submitted', enteredBy: { id: 'teacher1', name: 'Mr. Okafor', role: 'teacher' }, enteredAt: '2026-10-06T11:15:00.000Z' },
+
+    // STU004 - Emmanuel Adeyemi (Illustrating a pupil with an unrecorded CA2 in Nigerian History)
+    { id: 'stu004_english_ca1_2026_2027_first_term', schoolId: 'demo', studentId: 'STU004', studentName: 'Emmanuel Adeyemi', classId: 'Primary 5', subjectId: 'English', academicSessionId: '2026/2027', termId: 'First Term', assessmentType: 'CA1', score: 12, maximumScore: 20, status: 'submitted', enteredBy: { id: 'teacher1', name: 'Mr. Okafor', role: 'teacher' }, enteredAt: '2026-09-20T10:00:00.000Z' },
+    { id: 'stu004_english_ca2_2026_2027_first_term', schoolId: 'demo', studentId: 'STU004', studentName: 'Emmanuel Adeyemi', classId: 'Primary 5', subjectId: 'English', academicSessionId: '2026/2027', termId: 'First Term', assessmentType: 'CA2', score: 14, maximumScore: 20, status: 'submitted', enteredBy: { id: 'teacher1', name: 'Mr. Okafor', role: 'teacher' }, enteredAt: '2026-10-04T09:30:00.000Z' },
+    { id: 'stu004_math_ca1_2026_2027_first_term', schoolId: 'demo', studentId: 'STU004', studentName: 'Emmanuel Adeyemi', classId: 'Primary 5', subjectId: 'Math', academicSessionId: '2026/2027', termId: 'First Term', assessmentType: 'CA1', score: 10, maximumScore: 20, status: 'submitted', enteredBy: { id: 'teacher1', name: 'Mr. Okafor', role: 'teacher' }, enteredAt: '2026-09-18T10:00:00.000Z' },
+    { id: 'stu004_math_ca2_2026_2027_first_term', schoolId: 'demo', studentId: 'STU004', studentName: 'Emmanuel Adeyemi', classId: 'Primary 5', subjectId: 'Math', academicSessionId: '2026/2027', termId: 'First Term', assessmentType: 'CA2', score: 12, maximumScore: 20, status: 'submitted', enteredBy: { id: 'teacher1', name: 'Mr. Okafor', role: 'teacher' }, enteredAt: '2026-10-02T10:00:00.000Z' },
+    { id: 'stu004_basic_science_ca1_2026_2027_first_term', schoolId: 'demo', studentId: 'STU004', studentName: 'Emmanuel Adeyemi', classId: 'Primary 5', subjectId: 'Basic Science', academicSessionId: '2026/2027', termId: 'First Term', assessmentType: 'CA1', score: 11, maximumScore: 20, status: 'submitted', enteredBy: { id: 'teacher1', name: 'Mr. Okafor', role: 'teacher' }, enteredAt: '2026-09-26T11:15:00.000Z' },
+    { id: 'stu004_basic_science_ca2_2026_2027_first_term', schoolId: 'demo', studentId: 'STU004', studentName: 'Emmanuel Adeyemi', classId: 'Primary 5', subjectId: 'Basic Science', academicSessionId: '2026/2027', termId: 'First Term', assessmentType: 'CA2', score: 13, maximumScore: 20, status: 'submitted', enteredBy: { id: 'teacher1', name: 'Mr. Okafor', role: 'teacher' }, enteredAt: '2026-10-06T11:15:00.000Z' },
+    { id: 'stu004_nigerian_history_ca1_2026_2027_first_term', schoolId: 'demo', studentId: 'STU004', studentName: 'Emmanuel Adeyemi', classId: 'Primary 5', subjectId: 'Nigerian History', academicSessionId: '2026/2027', termId: 'First Term', assessmentType: 'CA1', score: 13, maximumScore: 20, status: 'submitted', enteredBy: { id: 'teacher1', name: 'Mr. Okafor', role: 'teacher' }, enteredAt: '2026-09-28T09:00:00.000Z' }
+    // Note: STU004 has no CA2 for Nigerian History yet - demonstrates unrecorded assessment handling
   ]
 };
 

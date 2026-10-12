@@ -19,6 +19,8 @@ import QuestionBankView from './QuestionBankView';
 import LiveExamMonitoring from './LiveExamMonitoring';
 import { isStudentInTeacherClasses } from '../lib/classUtils';
 import { CLASS_OPTIONS } from '../constants';
+import TeacherCAScoreEntry from './TeacherCAScoreEntry';
+import CAReportCardView from './CAReportCardView';
 
 export default function Dashboard() {
   const { branding, currentUser, currentRole, logout, data } = useStore();
@@ -28,13 +30,119 @@ export default function Dashboard() {
     : null;
   const teacherClasses = teacher?.classes || [];
 
-  const navItems = currentRole === 'admin' 
-    ? ['Dashboard', 'Students', 'Teachers', 'Subjects', 'Question Bank', 'Exams', 'Live Exam', 'Results', 'Reports', 'Analytics', 'Branding', 'Settings', 'Backup']
+  interface NavItemDef {
+    id: string;
+    label: string;
+    sub?: boolean;
+    icon?: string;
+  }
+
+  interface NavCategoryDef {
+    category?: string;
+    items: NavItemDef[];
+  }
+
+  const navGroups: NavCategoryDef[] = currentRole === 'admin' 
+    ? [
+        {
+          items: [{ id: 'Dashboard', label: 'Dashboard' }]
+        },
+        {
+          category: 'Academics & CBT',
+          items: [
+            { id: 'Students', label: 'Students' },
+            { id: 'Teachers', label: 'Teachers' },
+            { id: 'Subjects', label: 'Subjects' },
+            { id: 'CA Score Entry', label: 'CA Score Entry' },
+            { id: 'Question Bank', label: 'Question Bank' },
+            { id: 'Exams', label: 'Exams' },
+            { id: 'Live Exam', label: 'Live Exam' },
+            { id: 'Results', label: 'Results' },
+            { id: 'Attendance', label: 'Attendance' }
+          ]
+        },
+        {
+          category: 'Reports & Assessments',
+          items: [
+            { id: 'Reports Hub', label: 'Reports Hub' },
+            { id: 'CA 1 Report Card', label: 'CA 1 Report Card', sub: true },
+            { id: 'CA 2 Report Card', label: 'CA 2 Report Card', sub: true },
+            { id: 'Combined CA Report', label: 'Combined CA Report', sub: true },
+            { id: 'Academic Report Card', label: 'Academic Report', sub: true },
+            { id: 'AFL Report Card', label: 'AFL Report', sub: true }
+          ]
+        },
+        {
+          category: 'System & Admin',
+          items: [
+            { id: 'Analytics', label: 'Analytics' },
+            { id: 'Branding', label: 'Branding' },
+            { id: 'Settings', label: 'Settings' },
+            { id: 'Backup', label: 'Backup' }
+          ]
+        }
+      ]
     : currentRole === 'teacher'
-    ? ['Dashboard', 'My Classes', 'Question Bank', 'Exams', 'Live Exam', 'Results', 'Attendance', 'Analytics', 'Reports']
-    : ['Dashboard', 'My Exams', 'My Results', 'My Analytics'];
+    ? [
+        {
+          items: [{ id: 'Dashboard', label: 'Dashboard' }]
+        },
+        {
+          category: 'Classroom & CBT',
+          items: [
+            { id: 'CA Score Entry', label: 'CA Score Entry' },
+            { id: 'My Classes', label: 'My Classes' },
+            { id: 'Question Bank', label: 'Question Bank' },
+            { id: 'Exams', label: 'Exams' },
+            { id: 'Live Exam', label: 'Live Exam' },
+            { id: 'Results', label: 'Results' },
+            { id: 'Attendance', label: 'Attendance' }
+          ]
+        },
+        {
+          category: 'Reports & Assessments',
+          items: [
+            { id: 'Reports Hub', label: 'Reports Hub' },
+            { id: 'CA 1 Report Card', label: 'CA 1 Report Card', sub: true },
+            { id: 'CA 2 Report Card', label: 'CA 2 Report Card', sub: true },
+            { id: 'Combined CA Report', label: 'Combined CA Report', sub: true },
+            { id: 'Academic Report Card', label: 'Academic Report', sub: true },
+            { id: 'AFL Report Card', label: 'AFL Report', sub: true }
+          ]
+        },
+        {
+          category: 'Overview',
+          items: [
+            { id: 'Analytics', label: 'Analytics' }
+          ]
+        }
+      ]
+    : [
+        {
+          items: [{ id: 'Dashboard', label: 'Dashboard' }]
+        },
+        {
+          category: 'Student Portal',
+          items: [
+            { id: 'My Exams', label: 'My Exams' },
+            { id: 'My Results', label: 'My Results' },
+            { id: 'My Analytics', label: 'My Analytics' }
+          ]
+        },
+        {
+          category: 'Reports & Assessments',
+          items: [
+            { id: 'Reports Hub', label: 'Reports Hub' },
+            { id: 'CA 1 Report Card', label: 'CA 1 Report Card', sub: true },
+            { id: 'CA 2 Report Card', label: 'CA 2 Report Card', sub: true },
+            { id: 'Combined CA Report', label: 'Combined CA Report', sub: true },
+            { id: 'Academic Report Card', label: 'Academic Report', sub: true },
+            { id: 'AFL Report Card', label: 'AFL Report', sub: true }
+          ]
+        }
+      ];
     
-  const [activeTab, setActiveTab] = useState(navItems[0]);
+  const [activeTab, setActiveTab] = useState('Dashboard');
 
   const renderContent = () => {
     switch (activeTab) {
@@ -42,12 +150,23 @@ export default function Dashboard() {
       case 'Students': return <AdminStudents />;
       case 'Teachers': return <AdminTeachers />;
       case 'Subjects': return currentRole === 'admin' ? <SubjectsList /> : null;
+      case 'CA Score Entry': return currentRole !== 'student' ? <TeacherCAScoreEntry /> : null;
+      case 'CA 1 Report':
+      case 'CA 1 Report Card': return <CAReportCardView initialType="CA1" />;
+      case 'CA 2 Report':
+      case 'CA 2 Report Card': return <CAReportCardView initialType="CA2" />;
+      case 'Combined CA Report': return <CAReportCardView initialType="Combined" />;
+      case 'Academic Report':
+      case 'Academic Report Card': return <ReportsView initialCategory="academic" />;
+      case 'AFL Report':
+      case 'AFL Report Card': return <ReportsView initialCategory="afl" />;
       case 'Question Bank': return currentRole !== 'student' ? <QuestionBankView /> : null;
       case 'Exams': return currentRole !== 'student' ? <ExamsManager /> : null;
       case 'Live Exam': return currentRole !== 'student' ? <LiveExamMonitoring /> : null;
       case 'Results': return <ResultsView studentOnly={false} />;
       case 'My Results': return <ResultsView studentOnly={true} />;
-      case 'Reports': return <ReportsView />;
+      case 'Reports':
+      case 'Reports Hub': return <ReportsView initialCategory="academic" />;
       case 'Analytics':
       case 'My Analytics':
         return <AnalyticsView />;
@@ -77,21 +196,38 @@ export default function Dashboard() {
           )}
           <div className="text-xl font-extrabold">{branding.schoolName}</div>
         </div>
-        <div className="flex flex-col gap-1 flex-1">
-          {navItems.map(item => (
-            <div 
-              key={item}
-              className={`p-[11px_12px] rounded-[9px] cursor-pointer transition-colors ${activeTab === item ? 'text-slate-900' : 'hover:text-slate-900'}`}
-              style={{ backgroundColor: activeTab === item ? branding.secondary : 'transparent' }}
-              onMouseEnter={(e) => {
-                if (activeTab !== item) e.currentTarget.style.backgroundColor = branding.secondary;
-              }}
-              onMouseLeave={(e) => {
-                if (activeTab !== item) e.currentTarget.style.backgroundColor = 'transparent';
-              }}
-              onClick={() => setActiveTab(item)}
-            >
-              {item}
+        <div className="flex flex-col gap-2 flex-1">
+          {navGroups.map((group, gIdx) => (
+            <div key={gIdx} className="flex flex-col gap-0.5">
+              {group.category && (
+                <div className="text-[10px] font-black uppercase tracking-wider text-white/55 px-2.5 pt-2.5 pb-1 select-none">
+                  {group.category}
+                </div>
+              )}
+              {group.items.map(item => {
+                const isActive = activeTab === item.id;
+                return (
+                  <div 
+                    key={item.id}
+                    className={`rounded-[9px] cursor-pointer transition-all flex items-center ${
+                      item.sub 
+                        ? 'p-[8px_12px_8px_20px] text-xs' 
+                        : 'p-[10px_12px] text-sm font-medium'
+                    } ${isActive ? 'text-slate-900 font-bold' : 'hover:text-slate-900'}`}
+                    style={{ backgroundColor: isActive ? branding.secondary : 'transparent' }}
+                    onMouseEnter={(e) => {
+                      if (!isActive) e.currentTarget.style.backgroundColor = branding.secondary;
+                    }}
+                    onMouseLeave={(e) => {
+                      if (!isActive) e.currentTarget.style.backgroundColor = 'transparent';
+                    }}
+                    onClick={() => setActiveTab(item.id)}
+                  >
+                    {item.sub && <span className="opacity-50 mr-2 text-[10px]">└</span>}
+                    <span className="truncate">{item.label}</span>
+                  </div>
+                );
+              })}
             </div>
           ))}
         </div>

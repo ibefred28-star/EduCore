@@ -7,6 +7,7 @@ export interface ProvisionStudentParams {
   studentClass: string;
   password: string;
   photo?: string;
+  isUpdate?: boolean;
 }
 
 export interface ResetStudentPasswordParams {

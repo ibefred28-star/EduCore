@@ -62,6 +62,10 @@ export const FirestorePaths = {
   liveSessions: (schoolId: string) => `schools/${cleanId(schoolId)}/liveSessions`,
   liveSession: (schoolId: string, sessionId: string) => `schools/${cleanId(schoolId)}/liveSessions/${cleanId(sessionId)}`,
 
+  // Continuous Assessment (CA1 & CA2) Records
+  assessments: (schoolId: string) => `schools/${cleanId(schoolId)}/assessments`,
+  assessmentDoc: (schoolId: string, assessmentId: string) => `schools/${cleanId(schoolId)}/assessments/${cleanId(assessmentId)}`,
+
   // Immutable Audit Log Trail
   auditLogs: (schoolId: string) => `schools/${cleanId(schoolId)}/auditLogs`,
   auditLog: (schoolId: string, logId: string) => `schools/${cleanId(schoolId)}/auditLogs/${cleanId(logId)}`
