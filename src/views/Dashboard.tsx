@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import React, { useState } from 'react';
 import { useStore } from '../store';
 import { useToastStore } from '../store/toast';
 import { Button, Select } from '../components/ui';
@@ -21,128 +21,166 @@ import { isStudentInTeacherClasses } from '../lib/classUtils';
 import { CLASS_OPTIONS } from '../constants';
 import TeacherCAScoreEntry from './TeacherCAScoreEntry';
 import CAReportCardView from './CAReportCardView';
+import {
+  LayoutDashboard,
+  Users,
+  GraduationCap,
+  BookOpen,
+  Calculator,
+  FileQuestion,
+  FileSpreadsheet,
+  Radio,
+  Award,
+  CalendarCheck,
+  Layers,
+  Files,
+  FileCheck,
+  FileCheck2,
+  FolderCheck,
+  Sparkles,
+  BarChart3,
+  Palette,
+  Settings,
+  Database,
+  Clock,
+  LogOut,
+  Menu,
+  X,
+  ShieldCheck,
+  User,
+  ChevronRight,
+  School
+} from 'lucide-react';
+
+interface NavItemDef {
+  id: string;
+  label: string;
+  icon: React.ComponentType<{ className?: string }>;
+  sub?: boolean;
+  badge?: string;
+  badgeColor?: string;
+}
+
+interface NavCategoryDef {
+  category?: string;
+  items: NavItemDef[];
+}
 
 export default function Dashboard() {
   const { branding, currentUser, currentRole, logout, data } = useStore();
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   
   const teacher = currentRole === 'teacher' 
     ? data.teachers.find(t => (t.id || '').trim().toLowerCase() === (currentUser?.id || '').trim().toLowerCase()) || (currentUser as any)
     : null;
   const teacherClasses = teacher?.classes || [];
 
-  interface NavItemDef {
-    id: string;
-    label: string;
-    sub?: boolean;
-    icon?: string;
-  }
-
-  interface NavCategoryDef {
-    category?: string;
-    items: NavItemDef[];
-  }
-
   const navGroups: NavCategoryDef[] = currentRole === 'admin' 
     ? [
         {
-          items: [{ id: 'Dashboard', label: 'Dashboard' }]
+          items: [{ id: 'Dashboard', label: 'Dashboard', icon: LayoutDashboard }]
         },
         {
           category: 'Academics & CBT',
           items: [
-            { id: 'Students', label: 'Students' },
-            { id: 'Teachers', label: 'Teachers' },
-            { id: 'Subjects', label: 'Subjects' },
-            { id: 'CA Score Entry', label: 'CA Score Entry' },
-            { id: 'Question Bank', label: 'Question Bank' },
-            { id: 'Exams', label: 'Exams' },
-            { id: 'Live Exam', label: 'Live Exam' },
-            { id: 'Results', label: 'Results' },
-            { id: 'Attendance', label: 'Attendance' }
+            { id: 'Students', label: 'Students', icon: Users },
+            { id: 'Teachers', label: 'Teachers', icon: GraduationCap },
+            { id: 'Subjects', label: 'Subjects', icon: BookOpen },
+            { id: 'CA Score Entry', label: 'CA Score Entry', icon: Calculator },
+            { id: 'Question Bank', label: 'Question Bank', icon: FileQuestion },
+            { id: 'Exams', label: 'Exams', icon: FileSpreadsheet },
+            { id: 'Live Exam', label: 'Live Exam', icon: Radio, badge: 'Live', badgeColor: 'bg-rose-500' },
+            { id: 'Results', label: 'Results', icon: Award },
+            { id: 'Attendance', label: 'Attendance', icon: CalendarCheck }
           ]
         },
         {
           category: 'Reports & Assessments',
           items: [
-            { id: 'Reports Hub', label: 'Reports Hub' },
-            { id: 'CA 1 Report Card', label: 'CA 1 Report Card', sub: true },
-            { id: 'CA 2 Report Card', label: 'CA 2 Report Card', sub: true },
-            { id: 'Combined CA Report', label: 'Combined CA Report', sub: true },
-            { id: 'Academic Report Card', label: 'Academic Report', sub: true },
-            { id: 'AFL Report Card', label: 'AFL Report', sub: true }
+            { id: 'Reports Hub', label: 'Reports Hub', icon: Files },
+            { id: 'CA 1 Report Card', label: 'CA 1 Report Card', icon: FileCheck, sub: true, badge: '20' },
+            { id: 'CA 2 Report Card', label: 'CA 2 Report Card', icon: FileCheck2, sub: true, badge: '20' },
+            { id: 'Combined CA Report', label: 'Combined CA Report', icon: FolderCheck, sub: true, badge: '40' },
+            { id: 'Academic Report Card', label: 'Academic Report', icon: GraduationCap, sub: true },
+            { id: 'AFL Report Card', label: 'AFL Report', icon: Sparkles, sub: true }
           ]
         },
         {
           category: 'System & Admin',
           items: [
-            { id: 'Analytics', label: 'Analytics' },
-            { id: 'Branding', label: 'Branding' },
-            { id: 'Settings', label: 'Settings' },
-            { id: 'Backup', label: 'Backup' }
+            { id: 'Analytics', label: 'Analytics', icon: BarChart3 },
+            { id: 'Branding', label: 'Branding', icon: Palette },
+            { id: 'Settings', label: 'Settings', icon: Settings },
+            { id: 'Backup', label: 'Backup & Data', icon: Database }
           ]
         }
       ]
     : currentRole === 'teacher'
     ? [
         {
-          items: [{ id: 'Dashboard', label: 'Dashboard' }]
+          items: [{ id: 'Dashboard', label: 'Dashboard', icon: LayoutDashboard }]
         },
         {
           category: 'Classroom & CBT',
           items: [
-            { id: 'CA Score Entry', label: 'CA Score Entry' },
-            { id: 'My Classes', label: 'My Classes' },
-            { id: 'Question Bank', label: 'Question Bank' },
-            { id: 'Exams', label: 'Exams' },
-            { id: 'Live Exam', label: 'Live Exam' },
-            { id: 'Results', label: 'Results' },
-            { id: 'Attendance', label: 'Attendance' }
+            { id: 'CA Score Entry', label: 'CA Score Entry', icon: Calculator },
+            { id: 'My Classes', label: 'My Classes', icon: Layers },
+            { id: 'Question Bank', label: 'Question Bank', icon: FileQuestion },
+            { id: 'Exams', label: 'Exams', icon: FileSpreadsheet },
+            { id: 'Live Exam', label: 'Live Exam', icon: Radio, badge: 'Live', badgeColor: 'bg-rose-500' },
+            { id: 'Results', label: 'Results', icon: Award },
+            { id: 'Attendance', label: 'Attendance', icon: CalendarCheck }
           ]
         },
         {
           category: 'Reports & Assessments',
           items: [
-            { id: 'Reports Hub', label: 'Reports Hub' },
-            { id: 'CA 1 Report Card', label: 'CA 1 Report Card', sub: true },
-            { id: 'CA 2 Report Card', label: 'CA 2 Report Card', sub: true },
-            { id: 'Combined CA Report', label: 'Combined CA Report', sub: true },
-            { id: 'Academic Report Card', label: 'Academic Report', sub: true },
-            { id: 'AFL Report Card', label: 'AFL Report', sub: true }
+            { id: 'Reports Hub', label: 'Reports Hub', icon: Files },
+            { id: 'CA 1 Report Card', label: 'CA 1 Report Card', icon: FileCheck, sub: true, badge: '20' },
+            { id: 'CA 2 Report Card', label: 'CA 2 Report Card', icon: FileCheck2, sub: true, badge: '20' },
+            { id: 'Combined CA Report', label: 'Combined CA Report', icon: FolderCheck, sub: true, badge: '40' },
+            { id: 'Academic Report Card', label: 'Academic Report', icon: GraduationCap, sub: true },
+            { id: 'AFL Report Card', label: 'AFL Report', icon: Sparkles, sub: true }
           ]
         },
         {
-          category: 'Overview',
+          category: 'Insights',
           items: [
-            { id: 'Analytics', label: 'Analytics' }
+            { id: 'Analytics', label: 'Analytics', icon: BarChart3 }
           ]
         }
       ]
     : [
         {
-          items: [{ id: 'Dashboard', label: 'Dashboard' }]
+          items: [{ id: 'Dashboard', label: 'Dashboard', icon: LayoutDashboard }]
         },
         {
           category: 'Student Portal',
           items: [
-            { id: 'My Exams', label: 'My Exams' },
-            { id: 'My Results', label: 'My Results' },
-            { id: 'My Analytics', label: 'My Analytics' }
+            { id: 'My Exams', label: 'My Exams', icon: Clock },
+            { id: 'My Results', label: 'My Results', icon: Award },
+            { id: 'My Analytics', label: 'My Analytics', icon: BarChart3 }
           ]
         },
         {
           category: 'Reports & Assessments',
           items: [
-            { id: 'Reports Hub', label: 'Reports Hub' },
-            { id: 'CA 1 Report Card', label: 'CA 1 Report Card', sub: true },
-            { id: 'CA 2 Report Card', label: 'CA 2 Report Card', sub: true },
-            { id: 'Combined CA Report', label: 'Combined CA Report', sub: true },
-            { id: 'Academic Report Card', label: 'Academic Report', sub: true },
-            { id: 'AFL Report Card', label: 'AFL Report', sub: true }
+            { id: 'Reports Hub', label: 'Reports Hub', icon: Files },
+            { id: 'CA 1 Report Card', label: 'CA 1 Report Card', icon: FileCheck, sub: true, badge: '20' },
+            { id: 'CA 2 Report Card', label: 'CA 2 Report Card', icon: FileCheck2, sub: true, badge: '20' },
+            { id: 'Combined CA Report', label: 'Combined CA Report', icon: FolderCheck, sub: true, badge: '40' },
+            { id: 'Academic Report Card', label: 'Academic Report', icon: GraduationCap, sub: true },
+            { id: 'AFL Report Card', label: 'AFL Report', icon: Sparkles, sub: true }
           ]
         }
       ];
     
   const [activeTab, setActiveTab] = useState('Dashboard');
+
+  const handleSelectTab = (tabId: string) => {
+    setActiveTab(tabId);
+    setMobileMenuOpen(false);
+  };
 
   const renderContent = () => {
     switch (activeTab) {
@@ -180,76 +218,224 @@ export default function Dashboard() {
     }
   };
 
+  const roleLabel = currentRole === 'admin' 
+    ? 'School Administrator' 
+    : currentRole === 'teacher' 
+    ? 'Teacher Portal' 
+    : 'Student Portal';
+
+  const roleIcon = currentRole === 'admin' 
+    ? ShieldCheck 
+    : currentRole === 'teacher' 
+    ? GraduationCap 
+    : User;
+
+  const RoleIconComp = roleIcon;
+
   return (
-    <div className="min-h-screen bg-[var(--bg)] text-[var(--text)] flex flex-col md:flex-row">
-      <aside 
-        className="md:fixed md:left-0 md:top-0 md:bottom-0 w-full md:w-[250px] p-[18px] overflow-auto text-white flex flex-col"
+    <div className="min-h-screen bg-slate-100/60 text-slate-800 flex flex-col md:flex-row">
+      {/* Mobile Top Navigation Bar */}
+      <header 
+        className="md:hidden flex items-center justify-between px-4 py-3 text-white sticky top-0 z-40 shadow-sm"
         style={{ backgroundColor: branding.primary }}
       >
-        <div className="flex items-center gap-3 mb-[20px] my-[5px]">
-          {branding.logo && (
+        <div className="flex items-center gap-2.5 min-w-0">
+          {branding.logo ? (
             <img 
               src={branding.logo} 
               alt="Logo" 
-              className="w-10 h-10 object-cover rounded-full bg-white"
+              className="w-8 h-8 object-cover rounded-lg bg-white shrink-0 shadow-xs"
             />
+          ) : (
+            <div className="w-8 h-8 rounded-lg bg-white/10 flex items-center justify-center shrink-0">
+              <School className="w-4 h-4 text-white" />
+            </div>
           )}
-          <div className="text-xl font-extrabold">{branding.schoolName}</div>
+          <div className="min-w-0">
+            <div className="text-sm font-extrabold truncate leading-tight">{branding.schoolName || 'EduCore'}</div>
+            <div className="text-[10px] text-white/70 truncate">{activeTab}</div>
+          </div>
         </div>
-        <div className="flex flex-col gap-2 flex-1">
+
+        <button
+          type="button"
+          onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+          className="p-2 rounded-lg bg-white/10 hover:bg-white/20 text-white transition-colors cursor-pointer"
+          aria-label={mobileMenuOpen ? 'Close menu' : 'Open menu'}
+        >
+          {mobileMenuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
+        </button>
+      </header>
+
+      {/* Mobile Backdrop Overlay */}
+      {mobileMenuOpen && (
+        <div 
+          className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-40 md:hidden"
+          onClick={() => setMobileMenuOpen(false)}
+        />
+      )}
+
+      {/* Redesigned Sidebar (Desktop Fixed + Mobile Drawer) */}
+      <aside 
+        className={`
+          fixed top-0 bottom-0 left-0 z-50 md:z-30
+          w-72 md:w-64 flex flex-col justify-between
+          text-white shadow-xl md:shadow-md
+          transition-transform duration-300 ease-in-out
+          ${mobileMenuOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}
+        `}
+        style={{ backgroundColor: branding.primary }}
+      >
+        {/* Sidebar Header & Brand Area */}
+        <div className="p-4 pb-3 border-b border-white/10">
+          <div className="flex items-center gap-3">
+            {branding.logo ? (
+              <img 
+                src={branding.logo} 
+                alt="Logo" 
+                className="w-10 h-10 object-cover rounded-xl bg-white shadow-xs shrink-0 ring-2 ring-white/20"
+              />
+            ) : (
+              <div className="w-10 h-10 rounded-xl bg-white/15 border border-white/20 flex items-center justify-center shrink-0 shadow-xs">
+                <School className="w-5 h-5 text-white" />
+              </div>
+            )}
+            <div className="min-w-0 flex-1">
+              <div className="text-base font-extrabold truncate text-white leading-tight">
+                {branding.schoolName || 'EduCore'}
+              </div>
+              <div className="text-[11px] text-white/65 truncate font-medium">
+                {branding.motto || 'School Assessment System'}
+              </div>
+            </div>
+            {/* Mobile close button */}
+            <button
+              type="button"
+              onClick={() => setMobileMenuOpen(false)}
+              className="md:hidden p-1.5 rounded-lg text-white/70 hover:text-white hover:bg-white/10"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+
+          {/* Role Status Pill */}
+          <div className="mt-3 flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white/10 border border-white/10 text-white/90 text-xs">
+            <RoleIconComp className="w-3.5 h-3.5 text-white" />
+            <span className="font-semibold truncate">{roleLabel}</span>
+          </div>
+        </div>
+
+        {/* Navigation Categories & Items */}
+        <div className="flex-1 overflow-y-auto px-3 py-3 space-y-4 scrollbar-thin scrollbar-thumb-white/20">
           {navGroups.map((group, gIdx) => (
-            <div key={gIdx} className="flex flex-col gap-0.5">
+            <div key={gIdx} className="space-y-0.5">
               {group.category && (
-                <div className="text-[10px] font-black uppercase tracking-wider text-white/55 px-2.5 pt-2.5 pb-1 select-none">
-                  {group.category}
+                <div className="text-[10px] font-black uppercase tracking-wider text-white/50 px-2.5 pt-1.5 pb-1 select-none flex items-center justify-between">
+                  <span>{group.category}</span>
                 </div>
               )}
               {group.items.map(item => {
                 const isActive = activeTab === item.id;
+                const IconComponent = item.icon;
                 return (
-                  <div 
+                  <button 
                     key={item.id}
-                    className={`rounded-[9px] cursor-pointer transition-all flex items-center ${
-                      item.sub 
-                        ? 'p-[8px_12px_8px_20px] text-xs' 
-                        : 'p-[10px_12px] text-sm font-medium'
-                    } ${isActive ? 'text-slate-900 font-bold' : 'hover:text-slate-900'}`}
-                    style={{ backgroundColor: isActive ? branding.secondary : 'transparent' }}
-                    onMouseEnter={(e) => {
-                      if (!isActive) e.currentTarget.style.backgroundColor = branding.secondary;
+                    type="button"
+                    onClick={() => handleSelectTab(item.id)}
+                    className={`
+                      w-full rounded-xl cursor-pointer transition-all flex items-center justify-between text-left
+                      ${item.sub 
+                        ? 'py-2 pl-7 pr-3 text-xs' 
+                        : 'py-2.5 px-3 text-xs font-semibold'
+                      }
+                      ${isActive 
+                        ? 'font-bold shadow-xs' 
+                        : 'text-white/85 hover:text-white hover:bg-white/10'
+                      }
+                    `}
+                    style={{ 
+                      backgroundColor: isActive ? branding.secondary : undefined,
+                      color: isActive ? '#0f172a' : undefined
                     }}
-                    onMouseLeave={(e) => {
-                      if (!isActive) e.currentTarget.style.backgroundColor = 'transparent';
-                    }}
-                    onClick={() => setActiveTab(item.id)}
                   >
-                    {item.sub && <span className="opacity-50 mr-2 text-[10px]">└</span>}
-                    <span className="truncate">{item.label}</span>
-                  </div>
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      {item.sub ? (
+                        <div className={`w-1.5 h-1.5 rounded-full shrink-0 ${isActive ? 'bg-slate-900' : 'bg-white/50'}`} />
+                      ) : (
+                        <IconComponent className={`w-4 h-4 shrink-0 ${isActive ? 'text-slate-900' : 'text-white/80'}`} />
+                      )}
+                      <span className="truncate">{item.label}</span>
+                    </div>
+
+                    {/* Badge Indicator */}
+                    {item.badge && (
+                      <span className={`
+                        text-[10px] font-bold px-1.5 py-0.2 rounded-full uppercase tracking-wider shrink-0
+                        ${item.badgeColor || (isActive ? 'bg-slate-900/20 text-slate-900' : 'bg-white/20 text-white')}
+                      `}>
+                        {item.badge}
+                      </span>
+                    )}
+                  </button>
                 );
               })}
             </div>
           ))}
         </div>
-        <Button variant="secondary" className="w-full mt-5" onClick={logout}>
-          Logout
-        </Button>
-      </aside>
-      
-      <main className="md:ml-[250px] flex-1 p-4 md:p-[25px]">
-        <div className="flex flex-col md:flex-row md:justify-between md:items-center gap-4 mb-5">
-          <div>
-            <h1 className="text-2xl font-bold m-0">{activeTab}</h1>
-            <div className="flex flex-wrap items-center gap-2 mt-1">
-              <span className="text-slate-500 text-sm">{currentUser?.name} · {currentRole}</span>
-              {currentRole === 'teacher' && (
-                <span className="text-xs font-semibold px-2.5 py-0.5 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-200">
-                  Assigned: {teacherClasses.length > 0 ? teacherClasses.join(', ') : 'None assigned'}
-                </span>
-              )}
+
+        {/* User Profile Card & Sign Out Footer */}
+        <div className="p-3 border-t border-white/10 bg-black/10">
+          <div className="flex items-center justify-between gap-2 p-2 rounded-xl bg-white/5 border border-white/10 mb-2">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <div className="w-8 h-8 rounded-lg bg-white text-slate-900 flex items-center justify-center font-bold text-xs shrink-0 shadow-xs">
+                {(currentUser?.name || 'U').charAt(0).toUpperCase()}
+              </div>
+              <div className="min-w-0">
+                <div className="text-xs font-bold text-white truncate leading-tight">
+                  {currentUser?.name || 'Authorized User'}
+                </div>
+                <div className="text-[10px] text-white/60 truncate font-mono">
+                  {currentUser?.id || currentRole}
+                </div>
+              </div>
             </div>
           </div>
+
+          <button
+            type="button"
+            onClick={logout}
+            className="w-full flex items-center justify-center gap-2 py-2 px-3 rounded-xl bg-white/10 hover:bg-white/20 text-white text-xs font-semibold transition-colors cursor-pointer border border-white/10"
+          >
+            <LogOut className="w-3.5 h-3.5 text-white/80" />
+            <span>Sign Out</span>
+          </button>
         </div>
+      </aside>
+      
+      {/* Main App Canvas */}
+      <main className="md:ml-64 flex-1 p-4 md:p-6 min-w-0">
+        <header className="flex flex-col md:flex-row md:justify-between md:items-center gap-3 mb-6 bg-white p-4 rounded-2xl border border-slate-200/80 shadow-xs">
+          <div>
+            <div className="flex items-center gap-2 text-xs text-slate-500 font-medium">
+              <span>{branding.schoolName || 'EduCore'}</span>
+              <ChevronRight className="w-3 h-3 text-slate-400" />
+              <span className="text-indigo-600 font-semibold">{roleLabel}</span>
+            </div>
+            <h1 className="text-2xl font-black text-slate-900 tracking-tight mt-0.5 m-0">{activeTab}</h1>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            {currentRole === 'teacher' && teacherClasses.length > 0 && (
+              <span className="text-xs font-bold px-2.5 py-1 rounded-lg bg-indigo-50 text-indigo-700 border border-indigo-200 inline-flex items-center gap-1.5 shadow-xs">
+                <Layers className="w-3.5 h-3.5" />
+                Classes: {teacherClasses.join(', ')}
+              </span>
+            )}
+            <span className="text-xs font-semibold px-2.5 py-1 rounded-lg bg-slate-100 text-slate-700 border border-slate-200 shadow-xs">
+              {currentUser?.name} ({currentUser?.id})
+            </span>
+          </div>
+        </header>
         
         {renderContent()}
       </main>
@@ -305,7 +491,7 @@ function MyClassesView() {
   
   return (
     <div className="space-y-6">
-      <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+      <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h3 className="text-lg font-bold m-0 text-slate-800">My Assigned Teaching Classes</h3>
           <p className="text-sm text-slate-500 m-0 mt-0.5">
@@ -330,7 +516,7 @@ function MyClassesView() {
         {classes.map((c: string) => {
           const classStudents = data.students.filter(s => isStudentInTeacherClasses(s.class, [c]));
           return (
-            <div key={c} className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex flex-col justify-between">
+            <div key={c} className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs flex flex-col justify-between">
               <div>
                 <div className="flex items-start justify-between gap-2 mb-2">
                   <h3 className="text-xl font-bold m-0 text-slate-800">{c}</h3>
@@ -375,4 +561,3 @@ function MyClassesView() {
     </div>
   );
 }
-
