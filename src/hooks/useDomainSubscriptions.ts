@@ -41,7 +41,14 @@ export function useExamsSubscription(
   const exams = useMemo(() => {
     if (!rawExams) return [];
     if (targetClassFilter && targetClassFilter !== 'all') {
-      return rawExams.filter(e => !e.targetClasses || e.targetClasses.length === 0 || e.targetClasses.includes(targetClassFilter));
+      const classLower = targetClassFilter.trim().toLowerCase();
+      return rawExams.filter(e => {
+        if (!e.targetClasses || e.targetClasses.length === 0) return true;
+        return e.targetClasses.some(tc => {
+          const tcClean = String(tc || '').trim().toLowerCase();
+          return tcClean === classLower || classLower.includes(classLower) || classLower.includes(tcClean);
+        });
+      });
     }
     return rawExams;
   }, [rawExams, targetClassFilter]);

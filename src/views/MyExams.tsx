@@ -37,9 +37,14 @@ export default function MyExams() {
     return effectiveExams.filter(e => {
       const status = String(e.status || '').toLowerCase();
       if (status !== 'active') return false;
-      // If targetClasses is specified, check inclusion (allow if empty/undefined or includes studentClass)
+      // If targetClasses is specified, check inclusion case-insensitively
       if (e.targetClasses && e.targetClasses.length > 0 && studentClass) {
-        if (!e.targetClasses.includes(studentClass)) return false;
+        const studentClassLower = studentClass.trim().toLowerCase();
+        const matches = e.targetClasses.some(tc => {
+          const tcClean = String(tc || '').trim().toLowerCase();
+          return tcClean === studentClassLower || studentClassLower.includes(tcClean) || tcClean.includes(studentClassLower);
+        });
+        if (!matches) return false;
       }
       return true;
     });

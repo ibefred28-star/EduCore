@@ -27,17 +27,25 @@ export const ExamRepository = {
   ): Promise<FirestoreExamDoc[]> {
     if (!schoolId) return [];
     const colRef = collection(db, FirestorePaths.exams(schoolId));
-    let q = query(colRef, orderBy('createdAt', 'desc'));
-
-    if (statusFilter && statusFilter !== 'all') {
-      q = query(colRef, where('status', '==', statusFilter), orderBy('createdAt', 'desc'));
-    }
+    const q = query(colRef, orderBy('createdAt', 'desc'));
 
     const snapshot = await getDocs(q);
     let exams = snapshot.docs.map(d => d.data() as FirestoreExamDoc);
 
+    if (statusFilter && statusFilter !== 'all') {
+      const statusLower = statusFilter.trim().toLowerCase();
+      exams = exams.filter(e => String(e.status || '').trim().toLowerCase() === statusLower);
+    }
+
     if (targetClassFilter && targetClassFilter !== 'all') {
-      exams = exams.filter(e => e.targetClasses?.includes(targetClassFilter));
+      const classLower = targetClassFilter.trim().toLowerCase();
+      exams = exams.filter(e => {
+        if (!e.targetClasses || e.targetClasses.length === 0) return true;
+        return e.targetClasses.some(tc => {
+          const tcClean = String(tc || '').trim().toLowerCase();
+          return tcClean === classLower || classLower.includes(tcClean) || tcClean.includes(classLower);
+        });
+      });
     }
 
     return exams;
@@ -160,7 +168,14 @@ export const ExamRepository = {
     return onSnapshot(q, (snapshot) => {
       let exams = snapshot.docs.map(d => d.data() as FirestoreExamDoc);
       if (targetClassFilter && targetClassFilter !== 'all') {
-        exams = exams.filter(e => e.targetClasses?.includes(targetClassFilter));
+        const classLower = targetClassFilter.trim().toLowerCase();
+        exams = exams.filter(e => {
+          if (!e.targetClasses || e.targetClasses.length === 0) return true;
+          return e.targetClasses.some(tc => {
+            const tcClean = String(tc || '').trim().toLowerCase();
+            return tcClean === classLower || classLower.includes(tcClean) || classLower.includes(tcClean);
+          });
+        });
       }
       callback(exams);
     }, (error) => {

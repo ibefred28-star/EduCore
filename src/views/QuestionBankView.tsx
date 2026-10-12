@@ -46,8 +46,11 @@ export default function QuestionBankView() {
 
   const { questions: liveQuestions, loading: questionsLoading } = useQuestionBankSubscription(schoolId);
   const questions: BankQuestion[] = useMemo(() => {
-    if (liveQuestions && liveQuestions.length > 0) return liveQuestions;
-    return data.questions || [];
+    const map = new Map<string, BankQuestion>();
+    // Add local store questions first or live questions first
+    (data.questions || []).forEach(q => map.set(q.id, q));
+    (liveQuestions || []).forEach(q => map.set(q.id, q));
+    return Array.from(map.values());
   }, [liveQuestions, data.questions]);
   const exams: Exam[] = data.exams || [];
 
@@ -145,7 +148,11 @@ export default function QuestionBankView() {
         }
       }
 
-      if (filterSubject !== 'All' && q.subject !== filterSubject) return false;
+      if (filterSubject !== 'All') {
+        const sub1 = String(q.subject || '').trim().toLowerCase();
+        const sub2 = String(filterSubject || '').trim().toLowerCase();
+        if (sub1 !== sub2) return false;
+      }
       if (filterClass !== 'All' && q.class !== filterClass) return false;
       if (filterTopic !== 'All' && q.topic !== filterTopic) return false;
       if (filterDifficulty !== 'All' && q.difficulty !== filterDifficulty) return false;
@@ -1076,7 +1083,7 @@ export default function QuestionBankView() {
             classes={uniqueClasses}
             existingTopics={availableTopics}
             onCancel={() => setIsEditorOpen(false)}
-            onSave={(updated) => {
+            onSave={async (updated) => {
               updateData(draft => {
                 if (!Array.isArray(draft.questions)) draft.questions = [];
                 const idx = draft.questions.findIndex(x => x.id === updated.id);
@@ -1087,9 +1094,16 @@ export default function QuestionBankView() {
                 }
               });
               if (schoolId) {
-                QuestionBankRepository.upsertQuestion(schoolId, updated).catch(console.warn);
+                try {
+                  await QuestionBankRepository.upsertQuestion(schoolId, updated);
+                  showToast('Question saved and persisted successfully to Bank');
+                } catch (err: any) {
+                  console.error('Error saving question to Firestore:', err);
+                  showToast(`Saved locally, but Firestore persistence failed: ${err.message || ''}`);
+                }
+              } else {
+                showToast('Question saved successfully to Bank');
               }
-              showToast('Question saved successfully to Bank');
               setIsEditorOpen(false);
             }}
           />
