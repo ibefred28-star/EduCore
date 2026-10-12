@@ -49,6 +49,7 @@ import {
   ShieldCheck,
   User,
   ChevronRight,
+  ChevronDown,
   School
 } from 'lucide-react';
 
@@ -69,6 +70,7 @@ interface NavCategoryDef {
 export default function Dashboard() {
   const { branding, currentUser, currentRole, logout, data } = useStore();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [collapsedCategories, setCollapsedCategories] = useState<Record<string, boolean>>({});
   
   const teacher = currentRole === 'teacher' 
     ? data.teachers.find(t => (t.id || '').trim().toLowerCase() === (currentUser?.id || '').trim().toLowerCase()) || (currentUser as any)
@@ -327,60 +329,76 @@ export default function Dashboard() {
 
         {/* Navigation Categories & Items */}
         <div className="flex-1 overflow-y-auto px-3 py-3 space-y-4 scrollbar-thin scrollbar-thumb-white/20">
-          {navGroups.map((group, gIdx) => (
-            <div key={gIdx} className="space-y-0.5">
-              {group.category && (
-                <div className="text-[10px] font-black uppercase tracking-wider text-white/50 px-2.5 pt-1.5 pb-1 select-none flex items-center justify-between">
-                  <span>{group.category}</span>
-                </div>
-              )}
-              {group.items.map(item => {
-                const isActive = activeTab === item.id;
-                const IconComponent = item.icon;
-                return (
-                  <button 
-                    key={item.id}
+          {navGroups.map((group, gIdx) => {
+            const isCollapsed = group.category ? Boolean(collapsedCategories[group.category]) : false;
+            return (
+              <div key={gIdx} className="space-y-1">
+                {group.category && (
+                  <button
                     type="button"
-                    onClick={() => handleSelectTab(item.id)}
-                    className={`
-                      w-full rounded-xl cursor-pointer transition-all flex items-center justify-between text-left
-                      ${item.sub 
-                        ? 'py-2 pl-7 pr-3 text-xs' 
-                        : 'py-2.5 px-3 text-xs font-semibold'
-                      }
-                      ${isActive 
-                        ? 'font-bold shadow-xs' 
-                        : 'text-white/85 hover:text-white hover:bg-white/10'
-                      }
-                    `}
-                    style={{ 
-                      backgroundColor: isActive ? branding.secondary : undefined,
-                      color: isActive ? '#0f172a' : undefined
-                    }}
+                    onClick={() => group.category && setCollapsedCategories(prev => ({ ...prev, [group.category!]: !prev[group.category!] }))}
+                    className="w-full text-[11px] font-black uppercase tracking-wider text-white/70 hover:text-white px-2.5 pt-2 pb-1 select-none flex items-center justify-between cursor-pointer transition-colors group"
                   >
-                    <div className="flex items-center gap-2.5 min-w-0">
-                      {item.sub ? (
-                        <div className={`w-1.5 h-1.5 rounded-full shrink-0 ${isActive ? 'bg-slate-900' : 'bg-white/50'}`} />
-                      ) : (
-                        <IconComponent className={`w-4 h-4 shrink-0 ${isActive ? 'text-slate-900' : 'text-white/80'}`} />
-                      )}
-                      <span className="truncate">{item.label}</span>
-                    </div>
-
-                    {/* Badge Indicator */}
-                    {item.badge && (
-                      <span className={`
-                        text-[10px] font-bold px-1.5 py-0.2 rounded-full uppercase tracking-wider shrink-0
-                        ${item.badgeColor || (isActive ? 'bg-slate-900/20 text-slate-900' : 'bg-white/20 text-white')}
-                      `}>
-                        {item.badge}
-                      </span>
+                    <span>{group.category}</span>
+                    {isCollapsed ? (
+                      <ChevronRight className="w-3.5 h-3.5 text-white/50 group-hover:text-white" />
+                    ) : (
+                      <ChevronDown className="w-3.5 h-3.5 text-white/50 group-hover:text-white" />
                     )}
                   </button>
-                );
-              })}
-            </div>
-          ))}
+                )}
+                {(!group.category || !isCollapsed) && (
+                  <div className="space-y-0.5">
+                    {group.items.map(item => {
+                      const isActive = activeTab === item.id;
+                      const IconComponent = item.icon;
+                      return (
+                        <button 
+                          key={item.id}
+                          type="button"
+                          onClick={() => handleSelectTab(item.id)}
+                          className={`
+                            w-full rounded-xl cursor-pointer transition-all flex items-center justify-between text-left
+                            ${item.sub 
+                              ? 'py-2 pl-7 pr-3 text-xs' 
+                              : 'py-2.5 px-3 text-xs font-semibold'
+                            }
+                            ${isActive 
+                              ? 'font-bold shadow-xs' 
+                              : 'text-white/85 hover:text-white hover:bg-white/10'
+                            }
+                          `}
+                          style={{ 
+                            backgroundColor: isActive ? branding.secondary : undefined,
+                            color: isActive ? '#0f172a' : undefined
+                          }}
+                        >
+                          <div className="flex items-center gap-2.5 min-w-0">
+                            {item.sub ? (
+                              <div className={`w-1.5 h-1.5 rounded-full shrink-0 ${isActive ? 'bg-slate-900' : 'bg-white/50'}`} />
+                            ) : (
+                              <IconComponent className={`w-4 h-4 shrink-0 ${isActive ? 'text-slate-900' : 'text-white/80'}`} />
+                            )}
+                            <span className="truncate">{item.label}</span>
+                          </div>
+
+                          {/* Badge Indicator */}
+                          {item.badge && (
+                            <span className={`
+                              text-[10px] font-bold px-1.5 py-0.2 rounded-full uppercase tracking-wider shrink-0
+                              ${item.badgeColor || (isActive ? 'bg-slate-900/20 text-slate-900' : 'bg-white/20 text-white')}
+                            `}>
+                              {item.badge}
+                            </span>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
 
         {/* User Profile Card & Sign Out Footer */}

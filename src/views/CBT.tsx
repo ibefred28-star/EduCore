@@ -1,8 +1,9 @@
-import { useEffect, useState, useRef, useCallback } from 'react';
+import { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import { useStore } from '../store';
 import { useToastStore } from '../store/toast';
 import { Button, Input } from '../components/ui';
 import { Student } from '../types';
+import { useExamsSubscription } from '../hooks/useDomainSubscriptions';
 import {
   startStudentLiveSession,
   updateStudentLiveProgress,
@@ -19,7 +20,15 @@ export default function CBT() {
   const { data, activeExamId, currentUser, updateData, config, schoolId } = useStore();
   const showToast = useToastStore(s => s.showToast);
   
-  const exam = data.exams.find(e => e.id === activeExamId);
+  const studentClass = currentUser ? (currentUser as Student).class : undefined;
+  const { exams: liveExams } = useExamsSubscription(schoolId, studentClass);
+
+  const effectiveExams = useMemo(() => {
+    if (liveExams && liveExams.length > 0) return liveExams;
+    return data.exams;
+  }, [liveExams, data.exams]);
+
+  const exam = effectiveExams.find(e => String(e.id) === String(activeExamId));
   const rawQuestions = exam?.questions || [];
   
   // State initialization
@@ -102,7 +111,30 @@ export default function CBT() {
         }, 1000);
       } catch (err: any) {
         console.warn('CBT Initialization error:', err);
-        showToast(err.message || 'Error initializing exam session');
+        // Robust fallback for static / preview / offline environments
+        const fallbackAttemptId = `local_attempt_${exam.id}_${Date.now()}`;
+        const nowMs = Date.now();
+        const durationMins = Number(exam.duration) || 30;
+        const expiryIso = new Date(nowMs + durationMins * 60 * 1000).toISOString();
+
+        if (!isMounted) return;
+        setAttemptId(fallbackAttemptId);
+        expiryTimeRef.current = expiryIso;
+        setLifecycleState('in_progress');
+        const localDraft = CbtEngine.getLocalDraft(fallbackAttemptId) || {};
+        setAnswers(localDraft);
+        setTimeLeft(durationMins * 60);
+
+        timerRef.current = setInterval(() => {
+          if (!expiryTimeRef.current) return;
+          const remaining = CbtEngine.calculateTimeRemaining(expiryTimeRef.current);
+          setTimeLeft(remaining);
+          if (remaining <= 0) {
+            clearInterval(timerRef.current);
+            submitExam(true);
+          }
+        }, 1000);
+        showToast('Exam started in offline-resilient mode');
       } finally {
         if (isMounted) setIsInitializing(false);
       }
@@ -342,7 +374,15 @@ export default function CBT() {
     setShowConfirm(true);
   };
 
-  if (!exam) return null;
+  if (!exam) {
+    return (
+      <div className="min-h-screen bg-slate-50 p-6 flex flex-col items-center justify-center text-center">
+        <h3 className="text-xl font-bold text-slate-800 mb-2">Exam Session Not Found</h3>
+        <p className="text-slate-500 text-sm mb-4">The selected examination could not be loaded or is no longer active.</p>
+        <Button onClick={() => useStore.setState({ activeExamId: null })}>Return to Dashboard</Button>
+      </div>
+    );
+  }
 
   // Loading Screen
   if (isInitializing) {

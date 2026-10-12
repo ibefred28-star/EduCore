@@ -36,7 +36,7 @@ export default function MyExams() {
   const activeExams = useMemo(() => {
     return effectiveExams.filter(e => {
       const status = String(e.status || '').toLowerCase();
-      if (status !== 'active') return false;
+      if (!['active', 'published', 'open', 'ongoing'].includes(status)) return false;
       // If targetClasses is specified, check inclusion case-insensitively
       if (e.targetClasses && e.targetClasses.length > 0 && studentClass) {
         const studentClassLower = studentClass.trim().toLowerCase();
@@ -180,7 +180,7 @@ export default function MyExams() {
                   <span className="text-xs text-emerald-600 font-semibold flex items-center gap-1">
                     <CheckCircle2 className="w-3.5 h-3.5" /> Completed
                   </span>
-                  <Button variant="secondary" onClick={() => useStore.setState({ activeTab: 'results' })} className="px-3 py-1.5 text-xs">
+                  <Button variant="secondary" onClick={() => showToast('Check My Results in the sidebar to view detailed scores.')} className="px-3 py-1.5 text-xs">
                     View Results
                   </Button>
                 </div>

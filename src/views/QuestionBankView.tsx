@@ -49,7 +49,7 @@ export default function QuestionBankView() {
     const map = new Map<string, BankQuestion>();
     // Add local store questions first or live questions first
     (data.questions || []).forEach(q => map.set(q.id, q));
-    (liveQuestions || []).forEach(q => map.set(q.id, q));
+    (liveQuestions || []).forEach(q => map.set(q.id, { ...q, subtopic: q.subtopic || '' } as BankQuestion));
     return Array.from(map.values());
   }, [liveQuestions, data.questions]);
   const exams: Exam[] = data.exams || [];
