@@ -37,12 +37,18 @@ import {
   Calendar,
   AlertTriangle
 } from 'lucide-react';
+import { useQuestionBankSubscription } from '../hooks/useDomainSubscriptions';
+import { QuestionBankRepository } from '../lib/firestore/repositories/questionBankRepository';
 
 export default function QuestionBankView() {
-  const { data, currentUser, currentRole, updateData } = useStore();
+  const { data, currentUser, currentRole, updateData, schoolId } = useStore();
   const showToast = useToastStore(s => s.showToast);
 
-  const questions: BankQuestion[] = data.questions || [];
+  const { questions: liveQuestions } = useQuestionBankSubscription(schoolId);
+  const questions: BankQuestion[] = useMemo(() => {
+    if (liveQuestions && liveQuestions.length > 0) return liveQuestions;
+    return data.questions || [];
+  }, [liveQuestions, data.questions]);
   const exams: Exam[] = data.exams || [];
 
   // Filter States
@@ -240,6 +246,9 @@ export default function QuestionBankView() {
       if (!Array.isArray(draft.questions)) draft.questions = [];
       draft.questions.unshift(clone);
     });
+    if (schoolId) {
+      QuestionBankRepository.upsertQuestion(schoolId, clone).catch(console.warn);
+    }
     showToast('Question duplicated');
   };
 
@@ -249,35 +258,49 @@ export default function QuestionBankView() {
 
   const confirmDeleteQuestion = () => {
     if (!deleteConfirmQuestion) return;
+    const qId = deleteConfirmQuestion.id;
     updateData(draft => {
-      draft.questions = (draft.questions || []).filter(q => q.id !== deleteConfirmQuestion.id);
+      draft.questions = (draft.questions || []).filter(q => q.id !== qId);
     });
-    setSelectedIds(prev => prev.filter(id => id !== deleteConfirmQuestion.id));
+    setSelectedIds(prev => prev.filter(id => id !== qId));
+    if (schoolId) {
+      QuestionBankRepository.deleteQuestion(schoolId, qId).catch(console.warn);
+    }
     showToast('Question deleted from Question Bank');
     setDeleteConfirmQuestion(null);
   };
 
   const confirmBulkDelete = () => {
     if (selectedIds.length === 0) return;
+    const idsToDelete = [...selectedIds];
     updateData(draft => {
-      draft.questions = (draft.questions || []).filter(q => !selectedIds.includes(q.id));
+      draft.questions = (draft.questions || []).filter(q => !idsToDelete.includes(q.id));
     });
-    showToast(`Deleted ${selectedIds.length} questions`);
+    if (schoolId) {
+      idsToDelete.forEach(id => {
+        QuestionBankRepository.deleteQuestion(schoolId, id).catch(console.warn);
+      });
+    }
+    showToast(`Deleted ${idsToDelete.length} questions`);
     setSelectedIds([]);
     setIsBulkDeleteConfirmOpen(false);
   };
 
   const handleBulkChangeStatus = (status: BankQuestionStatus) => {
     if (selectedIds.length === 0) return;
+    const ids = [...selectedIds];
     updateData(draft => {
       (draft.questions || []).forEach(q => {
-        if (selectedIds.includes(q.id)) {
+        if (ids.includes(q.id)) {
           q.status = status;
           q.updatedAt = new Date().toISOString();
+          if (schoolId) {
+            QuestionBankRepository.upsertQuestion(schoolId, q).catch(console.warn);
+          }
         }
       });
     });
-    showToast(`Updated status of ${selectedIds.length} questions to "${status}"`);
+    showToast(`Updated status of ${ids.length} questions to "${status}"`);
   };
 
   // Add selected to exam
@@ -447,11 +470,17 @@ export default function QuestionBankView() {
       showToast('No valid questions to import');
       return;
     }
+    const imported = importPreview.valid;
     updateData(draft => {
       if (!Array.isArray(draft.questions)) draft.questions = [];
-      draft.questions.unshift(...importPreview.valid);
+      draft.questions.unshift(...imported);
     });
-    showToast(`Successfully imported ${importPreview.valid.length} questions into Question Bank`);
+    if (schoolId) {
+      imported.forEach(q => {
+        QuestionBankRepository.upsertQuestion(schoolId, q).catch(console.warn);
+      });
+    }
+    showToast(`Successfully imported ${imported.length} questions into Question Bank`);
     setIsImportModalOpen(false);
     setImportPreview(null);
     setImportFileName('');
@@ -1044,6 +1073,9 @@ export default function QuestionBankView() {
                   draft.questions.unshift(updated);
                 }
               });
+              if (schoolId) {
+                QuestionBankRepository.upsertQuestion(schoolId, updated).catch(console.warn);
+              }
               showToast('Question saved successfully to Bank');
               setIsEditorOpen(false);
             }}

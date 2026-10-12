@@ -8,8 +8,10 @@ import {
   FirestoreAttemptDoc,
   FirestoreResultDoc,
   FirestoreAnnouncementDoc,
-  FirestoreAttendanceDoc
+  FirestoreAttendanceDoc,
+  FirestoreQuestionBankDoc
 } from '../lib/firestore/models';
+import { QuestionBankRepository } from '../lib/firestore/repositories/questionBankRepository';
 import {
   useFirestoreSubscription,
   useFirestoreQueryData,
@@ -190,3 +192,25 @@ export function useAttendanceSubscription(
 
   return { attendance: attendance || [], loading, error };
 }
+
+/**
+ * Live subscription hook for question bank items
+ */
+export function useQuestionBankSubscription(
+  schoolId: string | null | undefined,
+  options?: UseFirestoreSubscriptionOptions
+) {
+  const q = useMemo(() => {
+    if (!schoolId) return null;
+    const colRef = collection(db, FirestorePaths.questionBanks(schoolId));
+    return query(colRef, orderBy('createdAt', 'desc'));
+  }, [schoolId]);
+
+  const { data: questions, loading, error } = useFirestoreQueryData<FirestoreQuestionBankDoc>(q, {
+    enabled: !!schoolId,
+    ...options
+  });
+
+  return { questions: questions || [], loading, error };
+}
+
