@@ -42,11 +42,18 @@ export function useExamsSubscription(
     if (!rawExams) return [];
     if (targetClassFilter && targetClassFilter !== 'all') {
       const classLower = targetClassFilter.trim().toLowerCase();
+      const classNorm = classLower.replace(/[^a-z0-9]/g, '');
       return rawExams.filter(e => {
         if (!e.targetClasses || e.targetClasses.length === 0) return true;
         return e.targetClasses.some(tc => {
-          const tcClean = String(tc || '').trim().toLowerCase();
-          return tcClean === classLower || classLower.includes(classLower) || classLower.includes(tcClean);
+          const tcRaw = String(tc || '').trim().toLowerCase();
+          const tcNorm = tcRaw.replace(/[^a-z0-9]/g, '');
+          if (!tcNorm || tcNorm === 'all' || tcNorm.startsWith('all') || tcNorm === 'general') return true;
+          return (
+            tcNorm === classNorm ||
+            classNorm.includes(tcNorm) ||
+            tcNorm.includes(classNorm)
+          );
         });
       });
     }

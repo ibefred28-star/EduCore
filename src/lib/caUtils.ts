@@ -63,7 +63,8 @@ export function getGradeForPercentage(percentage: number | null, grades: Grade[]
   if (percentage === null || isNaN(percentage)) {
     return { grade: 'N/A', remark: 'Incomplete Assessment' };
   }
-  const match = grades.find(g => percentage >= g.min) || grades[grades.length - 1];
+  const sorted = [...(grades || [])].sort((a, b) => b.min - a.min);
+  const match = sorted.find(g => percentage >= g.min) || sorted[sorted.length - 1];
   return {
     grade: match?.grade || 'F',
     remark: match?.remark || 'No remark'

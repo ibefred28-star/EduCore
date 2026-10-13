@@ -14,6 +14,7 @@ import {
 import { AttemptRepository } from '../lib/firestore/repositories/attemptRepository';
 import { FunctionsService } from '../lib/functions/functionsService';
 import { CbtEngine, AttemptLifecycleState } from '../lib/cbt/cbtEngine';
+import { evaluateAttempt } from '../lib/scoringEngine';
 import confetti from 'canvas-confetti';
 
 export default function CBT() {
@@ -33,6 +34,10 @@ export default function CBT() {
   
   // State initialization
   const [sanitizedQs, setSanitizedQs] = useState<any[]>(() => CbtEngine.sanitizeQuestions(rawQuestions));
+
+  useEffect(() => {
+    setSanitizedQs(CbtEngine.sanitizeQuestions(rawQuestions));
+  }, [rawQuestions]);
   const [answers, setAnswers] = useState<Record<number, any>>({});
   const [qIndex, setQIndex] = useState(0);
   const [timeLeft, setTimeLeft] = useState((exam?.duration || 30) * 60);
@@ -297,56 +302,13 @@ export default function CBT() {
         finalGrade = serverResult.grade;
         finalRemark = serverResult.remark;
       } else {
-        // Fallback grading if offline or serverless preview mode
-        let calculatedRaw = 0;
-        let totalMax = 0;
-        rawQuestions.forEach((q, idx) => {
-          const w = Number(q.marks) || 1;
-          totalMax += w;
-          const ans = answersRef.current[idx] !== undefined ? answersRef.current[idx] : answersRef.current[String(idx)];
-          if (ans !== undefined && ans !== null && ans !== '') {
-            let isCorrect = false;
-            if (q.type === 'mcq' || q.type === 'diagram') {
-              const correctAns = q.ans;
-              const options = q.options || [];
-              if (Number(ans) === Number(correctAns)) {
-                isCorrect = true;
-              } else if (String(ans).trim().toLowerCase() === String(correctAns).trim().toLowerCase()) {
-                isCorrect = true;
-              } else if (options.length > 0) {
-                const correctIdx = Number(correctAns);
-                const studentIdx = Number(ans);
-                if (Number.isFinite(correctIdx) && options[correctIdx] !== undefined) {
-                  if (String(options[correctIdx]).trim().toLowerCase() === String(ans).trim().toLowerCase()) isCorrect = true;
-                }
-                if (Number.isFinite(studentIdx) && options[studentIdx] !== undefined && Number.isFinite(correctIdx)) {
-                  if (String(options[studentIdx]).trim().toLowerCase() === String(options[correctIdx]).trim().toLowerCase()) isCorrect = true;
-                }
-              }
-            } else if (q.type === 'true_false') {
-              const norm = (v: any) => {
-                if (typeof v === 'boolean') return v ? 1 : 0;
-                if (typeof v === 'number') return v === 1 || v === 0 ? v : -1;
-                const s = String(v ?? '').trim().toLowerCase();
-                if (['true', 't', 'yes', '1'].includes(s)) return 1;
-                if (['false', 'f', 'no', '0'].includes(s)) return 0;
-                return -1;
-              };
-              if (norm(ans) === norm(q.ans)) isCorrect = true;
-            } else if (q.type === 'fill_blank') {
-              const exp = Array.isArray(q.answers) ? q.answers : q.answer ? [q.answer] : q.ans !== undefined ? [q.ans] : [];
-              const got = String(ans).trim().toLowerCase();
-              if (exp.some((e: any) => got === String(e ?? '').trim().toLowerCase())) isCorrect = true;
-            }
-            if (isCorrect) calculatedRaw += w;
-          }
-        });
-        finalRawMax = totalMax > 0 ? totalMax : sanitizedQs.length;
-        finalPct = finalRawMax > 0 ? Math.round((calculatedRaw / finalRawMax) * 100) : 0;
-        const g = config.grades.find(z => finalPct >= z.min) || config.grades[config.grades.length - 1];
-        finalScore = calculatedRaw;
-        finalGrade = g.grade;
-        finalRemark = g.remark;
+        // Authoritative fallback grading using unified scoring engine
+        const evaluated = evaluateAttempt(rawQuestions, answersRef.current, config, exam.type);
+        finalScore = evaluated.rawScore;
+        finalRawMax = evaluated.rawMax;
+        finalPct = evaluated.percentage;
+        finalGrade = evaluated.grade;
+        finalRemark = evaluated.remark;
       }
 
       // Record in local store for immediate client dashboard feedback
@@ -501,18 +463,30 @@ export default function CBT() {
             )}
             
             {type === 'true_false' && (
-              ['True', 'False'].map((o, i) => (
-                <label key={i} className="block p-3 my-2 border border-slate-200 rounded-lg cursor-pointer hover:bg-slate-50 transition-colors">
-                  <input 
-                    type="radio" 
-                    name="tf" 
-                    checked={answers[qIndex] === i} 
-                    onChange={() => handleAnswerChange(i)} 
-                    className="mr-2" 
-                  />
-                  {o}
-                </label>
-              ))
+              [
+                { label: 'True', val: true, altVal: 0 },
+                { label: 'False', val: false, altVal: 1 }
+              ].map((opt) => {
+                const currentAns = answers[qIndex];
+                const isChecked = currentAns === opt.val ||
+                  currentAns === opt.altVal ||
+                  String(currentAns).trim().toLowerCase() === opt.label.toLowerCase() ||
+                  (opt.val === true && ['true', 't', 'yes'].includes(String(currentAns).trim().toLowerCase())) ||
+                  (opt.val === false && ['false', 'f', 'no'].includes(String(currentAns).trim().toLowerCase()));
+
+                return (
+                  <label key={opt.label} className="block p-3 my-2 border border-slate-200 rounded-lg cursor-pointer hover:bg-slate-50 transition-colors">
+                    <input 
+                      type="radio" 
+                      name="tf" 
+                      checked={isChecked} 
+                      onChange={() => handleAnswerChange(opt.val)} 
+                      className="mr-2" 
+                    />
+                    {opt.label}
+                  </label>
+                );
+              })
             )}
             
             {type === 'diagram' && q.image && (

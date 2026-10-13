@@ -150,6 +150,8 @@ export const MigrationService = {
         const keys = rawQs.map((q, idx) => ({
           qIndex: idx,
           type: q.type || 'mcq',
+          q: q.q || '',
+          options: q.options || [],
           ans: q.ans !== undefined ? q.ans : undefined,
           answers: q.answers || undefined,
           answer: q.answer || undefined,

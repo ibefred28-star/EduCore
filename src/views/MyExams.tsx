@@ -23,26 +23,36 @@ export default function MyExams() {
     return data.results.filter(r => r.studentId === currentUser?.id);
   }, [liveResults, data.results, currentUser?.id]);
 
+  // Merge local and live exams by ID to ensure all created active exams are displayed
   const effectiveExams = useMemo(() => {
-    if (liveExams && liveExams.length > 0) return liveExams;
-    return data.exams;
+    const map = new Map<string, Exam>();
+    (data.exams || []).forEach(e => map.set(String(e.id), e));
+    (liveExams || []).forEach(e => map.set(String(e.id), e as Exam));
+    return Array.from(map.values());
   }, [liveExams, data.exams]);
 
   const getAttemptCount = (id: string | number) => {
     return effectiveResults.filter(r => String(r.examId) === String(id)).length;
   };
 
-  // Categorize active exams for this student's class
+  // Categorize active exams for this student's class with robust normalization
   const activeExams = useMemo(() => {
     return effectiveExams.filter(e => {
-      const status = String(e.status || '').toLowerCase();
+      const status = String(e.status || '').trim().toLowerCase();
       if (!['active', 'published', 'open', 'ongoing'].includes(status)) return false;
-      // If targetClasses is specified, check inclusion case-insensitively
+
+      // If targetClasses is specified, check inclusion case-insensitively & normalized
       if (e.targetClasses && e.targetClasses.length > 0 && studentClass) {
-        const studentClassLower = studentClass.trim().toLowerCase();
+        const studentClassNorm = studentClass.trim().toLowerCase().replace(/[^a-z0-9]/g, '');
         const matches = e.targetClasses.some(tc => {
-          const tcClean = String(tc || '').trim().toLowerCase();
-          return tcClean === studentClassLower || studentClassLower.includes(tcClean) || tcClean.includes(studentClassLower);
+          const tcRaw = String(tc || '').trim().toLowerCase();
+          const tcNorm = tcRaw.replace(/[^a-z0-9]/g, '');
+          if (!tcNorm || tcNorm === 'all' || tcNorm.startsWith('all') || tcNorm === 'general') return true;
+          return (
+            tcNorm === studentClassNorm ||
+            studentClassNorm.includes(tcNorm) ||
+            tcNorm.includes(studentClassNorm)
+          );
         });
         if (!matches) return false;
       }
@@ -60,7 +70,7 @@ export default function MyExams() {
     return getAttemptCount(e.id) >= maxAttempts;
   });
 
-  const [activeTab, setActiveTab] = useState<'available' | 'completed'>('available');
+  const [activeTab, setActiveTab] = useState<'all' | 'available' | 'completed'>('all');
 
   const startExam = (id: string | number) => {
     useStore.setState({ activeExamId: id });
@@ -84,13 +94,23 @@ export default function MyExams() {
           </div>
         </div>
 
-        {/* Tabs for Available vs Completed */}
-        <div className="flex items-center gap-2 mt-5 pt-4 border-t border-slate-100">
+        {/* Tabs for All vs Available vs Completed */}
+        <div className="flex flex-wrap items-center gap-2 mt-5 pt-4 border-t border-slate-100">
+          <button
+            onClick={() => setActiveTab('all')}
+            className={`px-4 py-2 text-xs font-bold rounded-lg transition-colors flex items-center gap-2 cursor-pointer ${
+              activeTab === 'all'
+                ? 'bg-indigo-600 text-white shadow-sm'
+                : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+            }`}
+          >
+            <BookOpen className="w-4 h-4" /> All Active Exams ({activeExams.length})
+          </button>
           <button
             onClick={() => setActiveTab('available')}
-            className={`px-4 py-2 text-xs font-bold rounded-lg transition-colors flex items-center gap-2 ${
+            className={`px-4 py-2 text-xs font-bold rounded-lg transition-colors flex items-center gap-2 cursor-pointer ${
               activeTab === 'available'
-                ? 'bg-indigo-600 text-white shadow-sm'
+                ? 'bg-emerald-600 text-white shadow-sm'
                 : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
             }`}
           >
@@ -98,9 +118,9 @@ export default function MyExams() {
           </button>
           <button
             onClick={() => setActiveTab('completed')}
-            className={`px-4 py-2 text-xs font-bold rounded-lg transition-colors flex items-center gap-2 ${
+            className={`px-4 py-2 text-xs font-bold rounded-lg transition-colors flex items-center gap-2 cursor-pointer ${
               activeTab === 'completed'
-                ? 'bg-indigo-600 text-white shadow-sm'
+                ? 'bg-blue-600 text-white shadow-sm'
                 : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
             }`}
           >
@@ -110,7 +130,70 @@ export default function MyExams() {
       </div>
 
       {/* Content */}
-      {activeTab === 'available' ? (
+      {activeTab === 'all' ? (
+        examsLoading && activeExams.length === 0 ? (
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+            <SkeletonCard />
+            <SkeletonCard />
+            <SkeletonCard />
+          </div>
+        ) : activeExams.length === 0 ? (
+          <div className="bg-white rounded-xl p-12 text-center border border-slate-200 shadow-sm">
+            <BookOpen className="w-12 h-12 text-slate-300 mx-auto mb-3" />
+            <h3 className="text-lg font-bold text-slate-700">No Active Exams Assigned</h3>
+            <p className="text-slate-500 text-sm max-w-md mx-auto mt-1">
+              There are currently no active exams assigned to your class ({studentClass || 'General'}). Check back soon or contact your teacher.
+            </p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+            {activeExams.map(e => {
+              const maxAttempts = Math.max(1, (e as any).attempts || 1);
+              const attemptsUsed = getAttemptCount(e.id);
+              const isCompleted = attemptsUsed >= maxAttempts;
+              const hasAttemptsLeft = attemptsUsed < maxAttempts;
+
+              return (
+                <Card key={e.id} className={`flex flex-col justify-between ${isCompleted ? 'bg-slate-50/70 border-slate-200' : 'border-indigo-100 hover:border-indigo-300'}`}>
+                  <div>
+                    <div className="flex items-start justify-between gap-2 mb-2">
+                      <h3 className="font-bold text-slate-800 text-base m-0 leading-snug">{e.title}</h3>
+                      {isCompleted ? (
+                        <span className="bg-blue-50 text-blue-700 text-[10px] font-bold px-2 py-0.5 rounded border border-blue-200 shrink-0">
+                          Submitted
+                        </span>
+                      ) : (
+                        <span className="bg-emerald-50 text-emerald-700 text-[10px] font-bold px-2 py-0.5 rounded border border-emerald-200 shrink-0">
+                          Active
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-slate-500 text-xs font-medium mb-1">{e.subject} · {e.type}</p>
+                    <div className="flex items-center gap-3 text-xs text-slate-600 my-2">
+                      <span className="flex items-center gap-1"><Clock className="w-3.5 h-3.5 text-slate-400" /> {e.duration} mins</span>
+                      <span className={isCompleted ? 'text-slate-500 font-medium' : 'text-indigo-600 font-semibold'}>
+                        Attempts: {attemptsUsed} / {maxAttempts}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between">
+                    <span className="text-xs text-slate-400">Questions: {e.questions?.length || 0}</span>
+                    {hasAttemptsLeft ? (
+                      <Button onClick={() => startExam(e.id)} className="px-4 py-1.5 text-xs">
+                        {attemptsUsed > 0 ? 'Retake Exam' : 'Start Exam'}
+                      </Button>
+                    ) : (
+                      <span className="text-xs text-emerald-600 font-semibold flex items-center gap-1">
+                        <CheckCircle2 className="w-3.5 h-3.5" /> Completed
+                      </span>
+                    )}
+                  </div>
+                </Card>
+              );
+            })}
+          </div>
+        )
+      ) : activeTab === 'available' ? (
         examsLoading && availableExams.length === 0 ? (
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
             <SkeletonCard />

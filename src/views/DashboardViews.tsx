@@ -44,6 +44,24 @@ export default function DashboardHome() {
       })
     : data.results;
 
+  // Compute student-specific active exams matching MyExams logic
+  const studentClass = currentUser && currentRole === 'student' ? (currentUser as any).class : '';
+  const studentActiveExamsCount = currentRole === 'student'
+    ? data.exams.filter(e => {
+        const status = String(e.status || '').trim().toLowerCase();
+        if (!['active', 'published', 'open', 'ongoing'].includes(status)) return false;
+        if (e.targetClasses && e.targetClasses.length > 0 && studentClass) {
+          const studentClassNorm = String(studentClass).trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+          return e.targetClasses.some(tc => {
+            const tcNorm = String(tc || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+            if (!tcNorm || tcNorm === 'all' || tcNorm.startsWith('all') || tcNorm === 'general') return true;
+            return tcNorm === studentClassNorm || studentClassNorm.includes(tcNorm) || tcNorm.includes(studentClassNorm);
+          });
+        }
+        return true;
+      }).length
+    : data.exams.length;
+
   const chartData = {
     labels: data.subjects.length > 0 ? data.subjects : ['None'],
     datasets: [
@@ -109,7 +127,9 @@ export default function DashboardHome() {
 
       <div className="bg-indigo-50 rounded-[24px] p-6 shadow-sm flex flex-col justify-center text-indigo-900 border border-indigo-100">
         <span className="font-medium mb-1 opacity-80">Available Exams</span>
-        <h2 className="text-4xl font-extrabold m-0">{data.exams.length}</h2>
+        <h2 className="text-4xl font-extrabold m-0">
+          {currentRole === 'student' ? studentActiveExamsCount : data.exams.length}
+        </h2>
       </div>
 
       {/* Chart Widget (spans full or 3 cols, and taller) */}

@@ -39,6 +39,7 @@ import {
 } from 'lucide-react';
 import { useQuestionBankSubscription } from '../hooks/useDomainSubscriptions';
 import { QuestionBankRepository } from '../lib/firestore/repositories/questionBankRepository';
+import { compressImageFile } from '../lib/imageUtils';
 
 export default function QuestionBankView() {
   const { data, currentUser, currentRole, updateData, schoolId } = useStore();
@@ -214,9 +215,9 @@ export default function QuestionBankView() {
       id: `qb_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
       type: 'mcq',
       q: '',
-      subject: uniqueSubjects[0] || 'General',
-      class: uniqueClasses[0] || 'Primary 5',
-      topic: '',
+      subject: filterSubject !== 'All' ? filterSubject : (uniqueSubjects[0] || 'General'),
+      class: filterClass !== 'All' ? filterClass : (uniqueClasses[0] || 'Primary 5'),
+      topic: filterTopic !== 'All' ? filterTopic : '',
       subtopic: '',
       difficulty: 'Medium',
       tags: [],
@@ -433,8 +434,8 @@ export default function QuestionBankView() {
               id: item.id || `qb_imp_${Date.now()}_${idx}`,
               type: item.type || 'mcq',
               q: item.q || 'Question Text',
-              subject: item.subject || 'General',
-              class: item.class || 'Primary 5',
+              subject: item.subject || (filterSubject !== 'All' ? filterSubject : (uniqueSubjects[0] || 'General')),
+              class: item.class || (filterClass !== 'All' ? filterClass : (uniqueClasses[0] || 'Primary 5')),
               topic: item.topic || 'General',
               subtopic: item.subtopic || 'General',
               difficulty: item.difficulty || 'Medium',
@@ -1722,14 +1723,20 @@ function QuestionEditorForm({
     setForm(prev => ({ ...prev, answers: (prev.answers || []).filter(a => a !== val) }));
   };
 
-  const handleImageFileChange = (e: ChangeEvent<HTMLInputElement>) => {
+  const handleImageFileChange = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      setForm(prev => ({ ...prev, image: reader.result as string }));
-    };
-    reader.readAsDataURL(file);
+    try {
+      const compressedDataUrl = await compressImageFile(file, 800, 800, 0.8);
+      setForm(prev => ({ ...prev, image: compressedDataUrl }));
+    } catch (err) {
+      console.warn('Image compression fallback:', err);
+      const reader = new FileReader();
+      reader.onload = () => {
+        setForm(prev => ({ ...prev, image: reader.result as string }));
+      };
+      reader.readAsDataURL(file);
+    }
   };
 
   const handleSubmit = () => {

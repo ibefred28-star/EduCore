@@ -6,48 +6,9 @@ import { isStudentInTeacherClasses } from '../lib/classUtils';
 import { FunctionsService } from '../lib/functions/functionsService';
 import { ResultRepository } from '../lib/firestore/repositories/resultRepository';
 import { useStudentResultsSubscription } from '../hooks/useDomainSubscriptions';
-import { CheckCircle2, Clock, Award, AlertCircle, FileText } from 'lucide-react';
-
-function normalizeTF(v: any) {
-  if (typeof v === 'boolean') return v ? 1 : 0;
-  if (typeof v === 'number') return v === 1 || v === 0 ? v : -1;
-  const x = String(v ?? '').trim().toLowerCase();
-  if (['true', 't', 'yes', '1'].includes(x)) return 1;
-  if (['false', 'f', 'no', '0'].includes(x)) return 0;
-  return -1;
-}
-
-function answerIsCorrect(q: any, a: any) {
-  const type = q.type || 'mcq';
-  if (a === undefined || a === null || a === '') return false;
-  if (type === 'fill_blank') {
-    const expected = Array.isArray(q.answers) ? q.answers : q.answer ? [q.answer] : q.ans !== undefined ? [q.ans] : [];
-    const got = String(a).trim().toLowerCase();
-    return expected.some((v: any) => got === String(v ?? '').trim().toLowerCase());
-  }
-  if (type === 'true_false') {
-    return normalizeTF(a) === normalizeTF(q.ans);
-  }
-  if (type === 'mcq' || type === 'diagram') {
-    const correctAns = q.ans;
-    const options = q.options || [];
-    if (Number(a) === Number(correctAns)) return true;
-    if (String(a).trim().toLowerCase() === String(correctAns).trim().toLowerCase()) return true;
-    if (options.length > 0) {
-      const correctIdx = Number(correctAns);
-      const studentIdx = Number(a);
-      if (Number.isFinite(correctIdx) && options[correctIdx] !== undefined) {
-        if (String(options[correctIdx]).trim().toLowerCase() === String(a).trim().toLowerCase()) return true;
-      }
-      if (Number.isFinite(studentIdx) && options[studentIdx] !== undefined && Number.isFinite(correctIdx)) {
-        if (String(options[studentIdx]).trim().toLowerCase() === String(options[correctIdx]).trim().toLowerCase()) return true;
-      }
-    }
-    return false;
-  }
-  const expected = Number(q.ans);
-  return Number.isFinite(expected) && Number(a) === expected;
-}
+import { CheckCircle2, Clock, Award, AlertCircle, FileText, Wrench, ShieldAlert } from 'lucide-react';
+import { evaluateAnswer, calculateGradeAndRemark, formatOptionDisplay, evaluateAttempt } from '../lib/scoringEngine';
+import GradingDiagnosticView from './GradingDiagnosticView';
 
 export default function ResultsView({ studentOnly = false }: { studentOnly?: boolean }) {
   const { data, currentUser, currentRole, schoolId, config, updateData } = useStore();
@@ -58,8 +19,19 @@ export default function ResultsView({ studentOnly = false }: { studentOnly?: boo
   const [isSubmittingMarks, setIsSubmittingMarks] = useState(false);
   const [manualMarks, setManualMarks] = useState<Record<number, number>>({});
   const [teacherFeedback, setTeacherFeedback] = useState('');
+  const [viewMode, setViewMode] = useState<'records' | 'diagnostics'>('records');
 
   const isStaff = currentRole === 'teacher' || currentRole === 'admin' || currentRole === 'superadmin';
+
+  const discrepancyCount = useMemo(() => {
+    if (!isStaff) return 0;
+    return (data.results || []).filter(r => {
+      const exam = data.exams.find(e => String(e.id) === String(r.examId));
+      if (!exam || !exam.questions || !r.answers) return false;
+      const evaluated = evaluateAttempt(exam.questions, r.answers, config, r.type);
+      return evaluated.rawScore !== r.raw || evaluated.grade !== r.grade;
+    }).length;
+  }, [data.results, data.exams, config, isStaff]);
 
   const teacher = currentRole === 'teacher' 
     ? data.teachers.find(t => (t.id || '').trim().toLowerCase() === (currentUser?.id || '').trim().toLowerCase()) || (currentUser as any)
@@ -140,33 +112,11 @@ export default function ResultsView({ studentOnly = false }: { studentOnly?: boo
 
         const items = questions.map((q: any, idx: number) => {
           const ans = studentAnswers[idx];
-          const ok = answerIsCorrect(q, ans);
+          const evalRes = evaluateAnswer(q, ans);
           const qType = q.type || 'mcq';
-          const maxMarks = Number(q.marks) || 1;
+          const maxMarks = evalRes.maxMarks;
 
-          let correctDisplay = '';
-          if (qType === 'fill_blank') {
-            correctDisplay = Array.isArray(q.answers) ? q.answers.join(' / ') : q.answer || '';
-          } else if (qType === 'true_false') {
-            correctDisplay = normalizeTF(q.ans) === 0 ? 'True' : 'False';
-          } else if (qType === 'diagram' || qType === 'mcq') {
-            correctDisplay = q.options?.[q.ans] ?? String(q.ans ?? '');
-          } else {
-            correctDisplay = q.answer || 'Subjective Evaluation';
-          }
-
-          let studentDisplay = 'No answer';
-          if (ans !== undefined && ans !== null && ans !== '') {
-            if (qType === 'true_false') {
-              studentDisplay = normalizeTF(ans) === 0 ? 'True' : 'False';
-            } else if (qType === 'mcq' || qType === 'diagram') {
-              studentDisplay = q.options?.[ans] ?? String(ans);
-            } else {
-              studentDisplay = String(ans);
-            }
-          }
-
-          const awarded = ok ? maxMarks : 0;
+          const awarded = evalRes.awardedMarks;
           initialMarks[idx] = awarded;
 
           return {
@@ -175,11 +125,12 @@ export default function ResultsView({ studentOnly = false }: { studentOnly?: boo
             type: qType,
             options: q.options || [],
             image: q.image || '',
-            studentAnswer: studentDisplay,
-            correctAnswer: correctDisplay,
+            studentAnswer: evalRes.studentDisplay,
+            correctAnswer: evalRes.correctDisplay,
             maxMarks,
             awardedMarks: awarded,
-            isCorrect: ok
+            isCorrect: evalRes.isCorrect,
+            explanation: evalRes.explanation
           };
         });
 
@@ -221,7 +172,7 @@ export default function ResultsView({ studentOnly = false }: { studentOnly?: boo
       });
 
       const pct = totalRawMax > 0 ? Math.round((updatedRaw / totalRawMax) * 100) : 0;
-      const matchedGrade = config.grades.find(g => pct >= g.min) || config.grades[config.grades.length - 1];
+      const matchedGrade = calculateGradeAndRemark(pct, config.grades);
 
       let maxComponent = r.max;
       if (!maxComponent) {
@@ -299,89 +250,139 @@ export default function ResultsView({ studentOnly = false }: { studentOnly?: boo
 
   return (
     <>
-      <div className="overflow-x-auto bg-white rounded-lg shadow border border-slate-200">
-        <table className="w-full border-collapse">
-          <thead>
-            <tr className="bg-slate-50 border-b border-slate-200 text-left">
-              <th className="p-3 font-semibold">Student</th>
-              <th className="p-3 font-semibold">Class</th>
-              <th className="p-3 font-semibold">Subject</th>
-              <th className="p-3 font-semibold">Type</th>
-              <th className="p-3 font-semibold">Raw Score</th>
-              <th className="p-3 font-semibold">Official Mark</th>
-              <th className="p-3 font-semibold">Grade</th>
-              <th className="p-3 font-semibold">Status</th>
-              <th className="p-3 font-semibold">Attempt</th>
-              <th className="p-3 font-semibold">Date</th>
-              <th className="p-3 font-semibold">Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rs.length === 0 ? (
-              <tr>
-                <td colSpan={11} className="p-8 text-center text-slate-500">
-                  No assessment results recorded yet.
-                </td>
-              </tr>
-            ) : (
-              rs.map(r => {
-                const s = data.students.find(x => x.id === r.studentId);
-                const pct = r.percentage ?? (r.rawMax > 0 ? Math.round((r.raw / r.rawMax) * 100) : 0);
-                const isPendingManual = r.gradingStatus === 'pending_manual';
-
-                return (
-                  <tr key={r.id} className="border-b border-slate-200 last:border-0 hover:bg-slate-50 transition-colors">
-                    <td className="p-3 font-medium text-slate-800">{s ? s.name : r.studentId}</td>
-                    <td className="p-3 text-slate-600">{s?.class || '—'}</td>
-                    <td className="p-3 font-medium">{r.subject}</td>
-                    <td className="p-3 text-slate-600">{r.type}</td>
-                    <td className="p-3 font-semibold text-slate-700">{r.raw} / {r.rawMax}</td>
-                    <td className="p-3 font-bold text-indigo-700">
-                      {r.max ? `${r.scaled} / ${r.max}` : `${pct}%`}
-                    </td>
-                    <td className="p-3">
-                      <span className={`inline-block px-2 py-0.5 rounded text-xs font-bold ${
-                        pct >= 70 ? 'bg-emerald-100 text-emerald-800' :
-                        pct >= 50 ? 'bg-blue-100 text-blue-800' :
-                        'bg-rose-100 text-rose-800'
-                      }`}>
-                        {r.grade || '—'}
-                      </span>
-                    </td>
-                    <td className="p-3">
-                      {isPendingManual ? (
-                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-800 border border-amber-300">
-                          <Clock className="w-3 h-3" /> Pending Marking
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-emerald-100 text-emerald-800 border border-emerald-300">
-                          <CheckCircle2 className="w-3 h-3" /> Official
-                        </span>
-                      )}
-                    </td>
-                    <td className="p-3 text-slate-600">{r.attempt || 1} / {r.attemptsAllowed || 1}</td>
-                    <td className="p-3 text-slate-500 text-xs">{new Date(r.submittedAt).toLocaleDateString()}</td>
-                    <td className="p-3">
-                      {r.answers ? (
-                        <Button
-                          variant={isStaff && isPendingManual ? 'primary' : 'secondary'}
-                          onClick={() => openReview(r)}
-                          disabled={isLoadingReview}
-                          className="text-xs py-1.5 px-3 flex items-center gap-1.5"
-                        >
-                          {isStaff ? (isPendingManual ? 'Grade / Mark' : 'Review & Mark') : 'Review Answers'}
-                        </Button>
-                      ) : (
-                        <span className="text-slate-400 text-xs">No answers</span>
-                      )}
-                    </td>
-                  </tr>
-                );
-              })
+      {isStaff && (
+        <div className="flex items-center gap-2 mb-4 bg-slate-200/70 p-1.5 rounded-xl w-fit">
+          <button
+            onClick={() => setViewMode('records')}
+            className={`px-4 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-2 ${
+              viewMode === 'records'
+                ? 'bg-white text-indigo-900 shadow-sm'
+                : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            <Award className="w-4 h-4" />
+            Official Results Records ({rs.length})
+          </button>
+          <button
+            onClick={() => setViewMode('diagnostics')}
+            className={`px-4 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-2 ${
+              viewMode === 'diagnostics'
+                ? 'bg-white text-indigo-900 shadow-sm'
+                : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            <ShieldAlert className="w-4 h-4 text-indigo-600" />
+            Grading Diagnostics & Re-calculator
+            {discrepancyCount > 0 && (
+              <span className="px-1.5 py-0.5 rounded-full text-[10px] font-extrabold bg-rose-500 text-white animate-pulse">
+                {discrepancyCount} Need Fix
+              </span>
             )}
-          </tbody>
-        </table>
-      </div>
+          </button>
+        </div>
+      )}
+
+      {viewMode === 'diagnostics' ? (
+        <GradingDiagnosticView />
+      ) : (
+        <div className="overflow-x-auto bg-white rounded-lg shadow border border-slate-200">
+          <table className="w-full border-collapse">
+            <thead>
+              <tr className="bg-slate-50 border-b border-slate-200 text-left">
+                <th className="p-3 font-semibold">Student</th>
+                <th className="p-3 font-semibold">Class</th>
+                <th className="p-3 font-semibold">Subject</th>
+                <th className="p-3 font-semibold">Type</th>
+                <th className="p-3 font-semibold">Raw Score</th>
+                <th className="p-3 font-semibold">Official Mark</th>
+                <th className="p-3 font-semibold">Grade</th>
+                <th className="p-3 font-semibold">Status</th>
+                <th className="p-3 font-semibold">Attempt</th>
+                <th className="p-3 font-semibold">Date</th>
+                <th className="p-3 font-semibold">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rs.length === 0 ? (
+                <tr>
+                  <td colSpan={11} className="p-8 text-center text-slate-500">
+                    No assessment results recorded yet.
+                  </td>
+                </tr>
+              ) : (
+                rs.map(r => {
+                  const s = data.students.find(x => x.id === r.studentId);
+                  const pct = r.percentage ?? (r.rawMax > 0 ? Math.round((r.raw / r.rawMax) * 100) : 0);
+                  const isPendingManual = r.gradingStatus === 'pending_manual';
+
+                  return (
+                    <tr key={r.id} className="border-b border-slate-200 last:border-0 hover:bg-slate-50 transition-colors">
+                      <td className="p-3 font-medium text-slate-800">{s ? s.name : r.studentId}</td>
+                      <td className="p-3 text-slate-600">{s?.class || '—'}</td>
+                      <td className="p-3 font-medium">{r.subject}</td>
+                      <td className="p-3 text-slate-600">{r.type}</td>
+                      <td className="p-3 font-semibold text-slate-700">{r.raw} / {r.rawMax}</td>
+                      <td className="p-3 font-bold text-indigo-700">
+                        {r.max ? `${r.scaled} / ${r.max}` : `${pct}%`}
+                      </td>
+                      <td className="p-3">
+                        <span className={`inline-block px-2 py-0.5 rounded text-xs font-bold ${
+                          pct >= 70 ? 'bg-emerald-100 text-emerald-800' :
+                          pct >= 50 ? 'bg-blue-100 text-blue-800' :
+                          'bg-rose-100 text-rose-800'
+                        }`}>
+                          {r.grade || '—'}
+                        </span>
+                      </td>
+                      <td className="p-3">
+                        {isPendingManual ? (
+                          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-800 border border-amber-300">
+                            <Clock className="w-3 h-3" /> Pending Marking
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-emerald-100 text-emerald-800 border border-emerald-300">
+                            <CheckCircle2 className="w-3 h-3" /> Official
+                          </span>
+                        )}
+                      </td>
+                      <td className="p-3 text-slate-600">{r.attempt || 1} / {r.attemptsAllowed || 1}</td>
+                      <td className="p-3 text-slate-500 text-xs">{new Date(r.submittedAt).toLocaleDateString()}</td>
+                      <td className="p-3">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          {r.answers ? (
+                            <Button
+                              variant={isStaff && isPendingManual ? 'primary' : 'secondary'}
+                              onClick={() => openReview(r)}
+                              disabled={isLoadingReview}
+                              className="text-xs py-1 px-2.5 flex items-center gap-1"
+                            >
+                              {isStaff ? (isPendingManual ? 'Grade' : 'Review') : 'Review'}
+                            </Button>
+                          ) : (
+                            <span className="text-slate-400 text-xs">No answers</span>
+                          )}
+
+                          {isStaff && r.answers && (
+                            <Button
+                              variant="secondary"
+                              onClick={() => setViewMode('diagnostics')}
+                              className="text-xs py-1 px-2 text-indigo-700 bg-indigo-50 border-indigo-200 hover:bg-indigo-100 flex items-center gap-1"
+                              title="Inspect in Grading Diagnostics"
+                            >
+                              <Wrench className="w-3 h-3 text-indigo-600" />
+                              Diagnose
+                            </Button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+      )}
 
       {/* Authoritative Answer Review & Manual Marking Modal */}
       <Modal isOpen={!!reviewResult} onClose={() => setReviewResult(null)}>

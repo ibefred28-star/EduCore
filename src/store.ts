@@ -294,7 +294,11 @@ export const useStore = create<StoreState>((set, get) => {
       const returnedData = updater(newData);
       const finalData = returnedData || newData;
       if (state.schoolId) {
-        localStorage.setItem(`educore_data_${state.schoolId}`, JSON.stringify(finalData));
+        try {
+          localStorage.setItem(`educore_data_${state.schoolId}`, JSON.stringify(finalData));
+        } catch (storageErr) {
+          console.warn('localStorage quota reached or storage unavailable:', storageErr);
+        }
       }
       set({ data: finalData });
 

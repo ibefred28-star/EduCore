@@ -5,6 +5,7 @@ import { AttemptRepository } from '../firestore/repositories/attemptRepository';
 import { ResultRepository } from '../firestore/repositories/resultRepository';
 import { UserService } from '../auth/userService';
 import { FirestoreResultDoc } from '../firestore/models';
+import { calculateGradeAndRemark } from '../scoringEngine';
 
 const functions = getFunctions(app);
 
@@ -151,10 +152,13 @@ export const FunctionsService = {
           const maxComp = resData.max;
           const scaledScore = maxComp && rawMax > 0 ? Math.round((newRaw / rawMax) * maxComp) : null;
           const pct = rawMax > 0 ? Math.round((newRaw / rawMax) * 100) : 0;
+          const { grade, remark } = calculateGradeAndRemark(pct);
           await updateDoc(resultRef, {
             raw: newRaw,
             scaled: scaledScore,
             percentage: pct,
+            grade,
+            remark,
             gradingStatus: 'final',
             teacherFeedback: feedback || '',
             breakdown,

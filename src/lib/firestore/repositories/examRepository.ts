@@ -39,11 +39,18 @@ export const ExamRepository = {
 
     if (targetClassFilter && targetClassFilter !== 'all') {
       const classLower = targetClassFilter.trim().toLowerCase();
+      const classNorm = classLower.replace(/[^a-z0-9]/g, '');
       exams = exams.filter(e => {
         if (!e.targetClasses || e.targetClasses.length === 0) return true;
         return e.targetClasses.some(tc => {
-          const tcClean = String(tc || '').trim().toLowerCase();
-          return tcClean === classLower || classLower.includes(tcClean) || tcClean.includes(classLower);
+          const tcRaw = String(tc || '').trim().toLowerCase();
+          const tcNorm = tcRaw.replace(/[^a-z0-9]/g, '');
+          if (!tcNorm || tcNorm === 'all' || tcNorm.startsWith('all') || tcNorm === 'general') return true;
+          return (
+            tcNorm === classNorm ||
+            classNorm.includes(tcNorm) ||
+            tcNorm.includes(classNorm)
+          );
         });
       });
     }
@@ -101,10 +108,12 @@ export const ExamRepository = {
       marks: q.marks || 1
     }));
 
-    // 2. Extract confidential answer keys
+    // 2. Extract confidential answer keys (preserving options for robust server grading)
     const answerKeys = exam.rawQuestions.map((q, idx) => ({
       qIndex: idx,
       type: q.type || 'mcq',
+      q: q.q || '',
+      options: q.options || [],
       ans: q.ans !== undefined ? q.ans : undefined,
       answers: q.answers || undefined,
       answer: q.answer || undefined,

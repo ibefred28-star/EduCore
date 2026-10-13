@@ -8,6 +8,7 @@ import {
   bankQuestionToExamQuestion,
   generateRandomExamQuestions
 } from '../lib/questionBankUtils';
+import { compressImageFile } from '../lib/imageUtils';
 import {
   BookOpen,
   Shuffle,
@@ -161,7 +162,11 @@ export default function ExamsManager() {
       if (!q.q) return false;
       if (t === 'fill_blank') return typeof q.answer === 'string' && q.answer.trim() !== '';
       if (t === 'true_false') return typeof q.ans === 'boolean' || q.ans === 0 || q.ans === 1;
-      if (t === 'diagram') return typeof q.image === 'string' && q.image.trim() !== '' && Array.isArray(q.options) && q.ans >= 0 && q.ans < q.options.length;
+      if (t === 'diagram') {
+        const hasImg = typeof q.image === 'string' && q.image.trim() !== '';
+        const hasOpts = Array.isArray(q.options) && q.options.length >= 2;
+        return hasImg && hasOpts;
+      }
       return Array.isArray(q.options) && q.options.length >= 2 && Number.isInteger(q.ans) && q.ans >= 0 && q.ans < q.options.length;
     });
   };
@@ -752,19 +757,67 @@ export default function ExamsManager() {
                 <Label>Question Text</Label>
                 <Input id="qa_q" placeholder="Question text..." />
                 
-                <div className="qa-field qa-diagram hidden">
-                  <Label>Diagram Image</Label>
-                  <Input type="file" accept="image/*" onChange={(e) => {
-                    const file = e.target.files?.[0];
-                    if (file) {
-                      const r = new FileReader();
-                      r.onload = () => {
-                        (document.getElementById('qa_image_data') as HTMLInputElement).value = r.result as string;
-                      };
-                      r.readAsDataURL(file);
-                    }
-                  }} />
+                <div className="qa-field qa-diagram hidden space-y-2 p-3 bg-indigo-50/60 rounded-xl border border-indigo-200">
+                  <Label className="text-indigo-950 font-bold">Diagram Image *</Label>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    <div>
+                      <span className="text-xs text-slate-500 block mb-1">Upload image:</span>
+                      <Input
+                        type="file"
+                        accept="image/*"
+                        onChange={async (e) => {
+                          const file = e.target.files?.[0];
+                          if (file) {
+                            try {
+                              const compressed = await compressImageFile(file, 800, 800, 0.8);
+                              (document.getElementById('qa_image_data') as HTMLInputElement).value = compressed;
+                              const previewEl = document.getElementById('qa_diagram_preview') as HTMLImageElement;
+                              if (previewEl) {
+                                previewEl.src = compressed;
+                                previewEl.classList.remove('hidden');
+                              }
+                            } catch (err) {
+                              const r = new FileReader();
+                              r.onload = () => {
+                                const res = r.result as string;
+                                (document.getElementById('qa_image_data') as HTMLInputElement).value = res;
+                                const previewEl = document.getElementById('qa_diagram_preview') as HTMLImageElement;
+                                if (previewEl) {
+                                  previewEl.src = res;
+                                  previewEl.classList.remove('hidden');
+                                }
+                              };
+                              r.readAsDataURL(file);
+                            }
+                          }
+                        }}
+                      />
+                    </div>
+                    <div>
+                      <span className="text-xs text-slate-500 block mb-1">Or paste image URL:</span>
+                      <Input
+                        id="qa_image_url"
+                        placeholder="https://example.com/diagram.png"
+                        onChange={(e) => {
+                          const val = e.target.value.trim();
+                          if (val) {
+                            (document.getElementById('qa_image_data') as HTMLInputElement).value = val;
+                            const previewEl = document.getElementById('qa_diagram_preview') as HTMLImageElement;
+                            if (previewEl) {
+                              previewEl.src = val;
+                              previewEl.classList.remove('hidden');
+                            }
+                          }
+                        }}
+                      />
+                    </div>
+                  </div>
                   <input type="hidden" id="qa_image_data" />
+                  <img
+                    id="qa_diagram_preview"
+                    alt="Diagram Preview"
+                    className="hidden h-24 object-contain rounded border border-indigo-200 mt-2 bg-white p-1"
+                  />
                 </div>
 
                 <div className="qa-field qa-mcq qa-diagram grid grid-cols-2 gap-2 mt-2">
@@ -799,7 +852,7 @@ export default function ExamsManager() {
                   </div>
                 </div>
                 
-                <Button className="mt-3" onClick={() => {
+                <Button className="mt-3 cursor-pointer" onClick={() => {
                   const type = (document.getElementById('qa_type') as HTMLSelectElement).value;
                   const q = (document.getElementById('qa_q') as HTMLInputElement).value;
                   const marks = Number((document.getElementById('qa_marks') as HTMLInputElement).value) || 1;
@@ -823,15 +876,17 @@ export default function ExamsManager() {
                       return;
                     }
                     newQ.options = [o0, o1, o2, o3].filter(Boolean);
-                    newQ.ans = ans;
+                    newQ.ans = Math.min(ans, newQ.options.length - 1);
                     
                     if (type === 'diagram') {
-                      const img = (document.getElementById('qa_image_data') as HTMLInputElement).value;
-                      if (!img) {
-                        showToast('Please select an image for diagram question');
+                      const imgData = (document.getElementById('qa_image_data') as HTMLInputElement)?.value;
+                      const imgUrl = (document.getElementById('qa_image_url') as HTMLInputElement)?.value;
+                      const finalImg = imgData || imgUrl;
+                      if (!finalImg) {
+                        showToast('Please upload an image or provide an image URL for diagram question');
                         return;
                       }
-                      newQ.image = img;
+                      newQ.image = finalImg;
                     }
                   } else if (type === 'true_false') {
                     newQ.ans = parseInt((document.getElementById('qa_ans_tf') as HTMLSelectElement).value) === 1;
@@ -852,6 +907,13 @@ export default function ExamsManager() {
                   (document.getElementById('qa_opt3') as HTMLInputElement).value = '';
                   (document.getElementById('qa_ans_blank') as HTMLInputElement).value = '';
                   (document.getElementById('qa_image_data') as HTMLInputElement).value = '';
+                  const imgUrlInput = document.getElementById('qa_image_url') as HTMLInputElement;
+                  if (imgUrlInput) imgUrlInput.value = '';
+                  const previewEl = document.getElementById('qa_diagram_preview') as HTMLImageElement;
+                  if (previewEl) {
+                    previewEl.src = '';
+                    previewEl.classList.add('hidden');
+                  }
                   
                   showToast('Question appended to exam');
                   setActiveEditorTab('visual');

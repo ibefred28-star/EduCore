@@ -8,6 +8,7 @@ import { Chart as ChartJS, CategoryScale, LinearScale, BarElement, Title, Toolti
 import { Bar } from 'react-chartjs-2';
 import { isStudentInTeacherClasses } from '../lib/classUtils';
 import { computeStudentCASummary } from '../lib/caUtils';
+import { calculateGradeAndRemark } from '../lib/scoringEngine';
 import CAReportCardView from './CAReportCardView';
 
 ChartJS.register(CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend);
@@ -266,7 +267,7 @@ export default function ReportsView({ initialCategory = 'academic' }: ReportsVie
       const isComplete = subItem.isAcademicComplete;
       const total = subItem.finalSubjectScore;
       const g = isComplete && total !== null
-        ? (config.grades.find(z => total >= z.min) || config.grades[config.grades.length - 1])
+        ? calculateGradeAndRemark(total, config.grades)
         : { grade: 'Inc', remark: 'Provisional (Pending Assessment)' };
 
       return {
@@ -285,7 +286,7 @@ export default function ReportsView({ initialCategory = 'academic' }: ReportsVie
     const completeRows = rows.filter(r => r.isComplete && r.total !== null);
     const avg = completeRows.length ? completeRows.reduce((a, r) => a + (r.total || 0), 0) / completeRows.length : 0;
     const overallGrade = completeRows.length 
-      ? (config.grades.find(z => avg >= z.min) || config.grades[config.grades.length - 1])
+      ? calculateGradeAndRemark(Math.round(avg), config.grades)
       : { grade: 'Inc', remark: 'Provisional Assessment' };
 
     const chartData = {
@@ -770,7 +771,7 @@ export default function ReportsView({ initialCategory = 'academic' }: ReportsVie
                 {afl.map((r, i) => {
                   const pct = getPct(r);
                   const score10 = getScore10(r);
-                  const g = config.grades.find(z => pct >= z.min) || config.grades[config.grades.length - 1];
+                  const g = calculateGradeAndRemark(pct, config.grades);
                   return (
                     <tr key={r.id} className={i % 2 === 1 ? 'bg-slate-50/50' : 'bg-white'}>
                       <td className="p-1.5 px-2 text-slate-600">{new Date(r.submittedAt).toLocaleDateString()}</td>
@@ -802,8 +803,8 @@ export default function ReportsView({ initialCategory = 'academic' }: ReportsVie
                   <td className="p-2 text-center text-emerald-700 font-extrabold">{avg10.toFixed(1)} / 10</td>
                   <td className="p-2 text-center text-slate-900 font-bold">{avg.toFixed(1)}%</td>
                   <td className="p-2 text-center">
-                    <span className={`inline-block px-2 py-0.5 rounded text-[10px] ${getGradeBadge(config.grades.find(z => avg >= z.min)?.grade || '')}`}>
-                      {config.grades.find(z => avg >= z.min)?.grade || '-'}
+                    <span className={`inline-block px-2 py-0.5 rounded text-[10px] ${getGradeBadge(calculateGradeAndRemark(Math.round(avg), config.grades)?.grade || '')}`}>
+                      {calculateGradeAndRemark(Math.round(avg), config.grades)?.grade || '-'}
                     </span>
                   </td>
                 </tr>

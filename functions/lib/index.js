@@ -56,20 +56,21 @@ function verifySchoolAccess(caller, targetSchoolId) {
     }
 }
 function calculateGradeAndRemark(percentage, customGrades) {
-    const grades = customGrades && customGrades.length > 0
-        ? customGrades
-        : [
-            { min: 75, grade: 'A', remark: 'Excellent' },
-            { min: 65, grade: 'B', remark: 'Very Good' },
-            { min: 55, grade: 'C', remark: 'Good' },
-            { min: 45, grade: 'D', remark: 'Fair' },
-            { min: 40, grade: 'E', remark: 'Pass' },
-            { min: 0, grade: 'F', remark: 'Fail' }
-        ];
-    const matched = grades.find((g) => percentage >= g.min) || grades[grades.length - 1];
+    const defaultGrades = [
+        { min: 75, grade: 'A', remark: 'Excellent' },
+        { min: 65, grade: 'B', remark: 'Very Good' },
+        { min: 55, grade: 'C', remark: 'Good' },
+        { min: 45, grade: 'D', remark: 'Fair' },
+        { min: 40, grade: 'E', remark: 'Pass' },
+        { min: 0, grade: 'F', remark: 'Fail' }
+    ];
+    const rawGrades = customGrades && customGrades.length > 0 ? customGrades : defaultGrades;
+    // Strictly sort descending by minimum threshold to prevent ordering bugs
+    const grades = [...rawGrades].sort((a, b) => Number(b.min || 0) - Number(a.min || 0));
+    const matched = grades.find((g) => percentage >= Number(g.min || 0)) || grades[grades.length - 1];
     return {
-        grade: matched.grade || 'F',
-        remark: matched.remark || 'Fail'
+        grade: matched?.grade || 'F',
+        remark: matched?.remark || (percentage >= 50 ? 'Pass' : 'Fail')
     };
 }
 exports.startExamAttempt = (0, https_1.onCall)(async (request) => {
@@ -204,11 +205,31 @@ exports.submitExamAttempt = (0, https_1.onCall)(async (request) => {
     let totalMaxMarks = 0;
     let pendingManualCount = 0;
     const breakdown = [];
+    const normalizeTF = (v) => {
+        if (v === undefined || v === null || v === '')
+            return null;
+        if (typeof v === 'boolean')
+            return v;
+        const s = String(v).trim().toLowerCase();
+        if (['true', 't', 'yes'].includes(s))
+            return true;
+        if (['false', 'f', 'no'].includes(s))
+            return false;
+        if (s === '0' || v === 0)
+            return true; // Radio index 0 represents 'True' in ['True', 'False']
+        if (s === '1' || v === 1)
+            return false; // Radio index 1 represents 'False'
+        return null;
+    };
     keys.forEach((keyItem, idx) => {
         const questionWeight = Number(keyItem.marks) || 1;
         totalMaxMarks += questionWeight;
-        const studentAns = submittedAnswers[idx];
+        const sAnswers = submittedAnswers;
+        const studentAns = sAnswers[idx] !== undefined ? sAnswers[idx] : sAnswers[String(idx)];
         const qType = keyItem.type || 'mcq';
+        const options = (Array.isArray(keyItem.options) && keyItem.options.length > 0)
+            ? keyItem.options
+            : (examData.questions && examData.questions[idx] && Array.isArray(examData.questions[idx].options) ? examData.questions[idx].options : []);
         let isCorrect = false;
         let awardedMarks = 0;
         let requiresManual = false;
@@ -217,26 +238,65 @@ exports.submitExamAttempt = (0, https_1.onCall)(async (request) => {
             pendingManualCount++;
         }
         else if (studentAns !== undefined && studentAns !== null && studentAns !== '') {
-            if (qType === 'mcq' || qType === 'diagram') {
-                isCorrect = Number(studentAns) === Number(keyItem.ans);
-            }
-            else if (qType === 'true_false') {
-                const normalize = (v) => {
-                    if (typeof v === 'boolean')
-                        return v ? 0 : 1;
-                    const s = String(v ?? '').trim().toLowerCase();
-                    if (['true', 't', 'yes', '0'].includes(s))
-                        return 0;
-                    return 1;
-                };
-                isCorrect = normalize(studentAns) === normalize(keyItem.ans);
+            if (qType === 'true_false') {
+                const sNorm = normalizeTF(studentAns);
+                const cNorm = normalizeTF(keyItem.ans);
+                if (sNorm !== null && cNorm !== null && sNorm === cNorm) {
+                    isCorrect = true;
+                }
             }
             else if (qType === 'fill_blank') {
-                const expectedArr = Array.isArray(keyItem.answers)
-                    ? keyItem.answers
-                    : keyItem.answer ? [keyItem.answer] : [];
-                const got = String(studentAns).trim().toLowerCase();
-                isCorrect = expectedArr.some((expected) => got === String(expected ?? '').trim().toLowerCase());
+                const expectedArr = [];
+                if (Array.isArray(keyItem.answers))
+                    expectedArr.push(...keyItem.answers.map(String));
+                if (keyItem.answer !== undefined && keyItem.answer !== null && keyItem.answer !== '')
+                    expectedArr.push(String(keyItem.answer));
+                if (keyItem.ans !== undefined && keyItem.ans !== null && keyItem.ans !== '' && !expectedArr.includes(String(keyItem.ans)))
+                    expectedArr.push(String(keyItem.ans));
+                const cleanStudent = String(studentAns).trim().toLowerCase().replace(/[.,/#!$%^&*;:{}=\-_`~()]/g, '');
+                isCorrect = expectedArr.some(exp => {
+                    const cleanExp = String(exp).trim().toLowerCase().replace(/[.,/#!$%^&*;:{}=\-_`~()]/g, '');
+                    return cleanStudent === cleanExp || String(studentAns).trim().toLowerCase() === String(exp).trim().toLowerCase();
+                });
+            }
+            else {
+                // MCQ and Diagram questions
+                const rawCorrect = keyItem.ans;
+                if (Number(studentAns) === Number(rawCorrect)) {
+                    isCorrect = true;
+                }
+                else if (String(studentAns).trim().toLowerCase() === String(rawCorrect).trim().toLowerCase()) {
+                    isCorrect = true;
+                }
+                else if (options.length > 0) {
+                    const correctIdx = Number(rawCorrect);
+                    const studentIdx = Number(studentAns);
+                    if (Number.isInteger(correctIdx) && options[correctIdx] !== undefined) {
+                        if (String(options[correctIdx]).trim().toLowerCase() === String(studentAns).trim().toLowerCase()) {
+                            isCorrect = true;
+                        }
+                    }
+                    if (!isCorrect && Number.isInteger(studentIdx) && options[studentIdx] !== undefined) {
+                        if (String(options[studentIdx]).trim().toLowerCase() === String(rawCorrect).trim().toLowerCase()) {
+                            isCorrect = true;
+                        }
+                    }
+                    if (!isCorrect && Number.isInteger(studentIdx) && Number.isInteger(correctIdx)) {
+                        if (options[studentIdx] && options[correctIdx] &&
+                            options[studentIdx].trim().toLowerCase() === options[correctIdx].trim().toLowerCase()) {
+                            isCorrect = true;
+                        }
+                    }
+                }
+                if (!isCorrect) {
+                    const letterMap = { a: 0, b: 1, c: 2, d: 3, e: 4 };
+                    const sStr = String(studentAns).trim().toLowerCase();
+                    const cStr = String(rawCorrect).trim().toLowerCase();
+                    if (letterMap[sStr] !== undefined && letterMap[sStr] === Number(rawCorrect))
+                        isCorrect = true;
+                    if (letterMap[cStr] !== undefined && letterMap[cStr] === Number(studentAns))
+                        isCorrect = true;
+                }
             }
         }
         if (isCorrect) {
@@ -366,13 +426,15 @@ exports.getExamReview = (0, https_1.onCall)(async (request) => {
         const qType = q.type || 'mcq';
         if (qType === 'mcq' || qType === 'diagram') {
             const optIdx = Number(keyItem.ans);
-            correctDisplay = q.options && q.options[optIdx] !== undefined ? q.options[optIdx] : String(optIdx);
+            correctDisplay = q.options && q.options[optIdx] !== undefined ? q.options[optIdx] : String(keyItem.ans ?? optIdx);
         }
         else if (qType === 'true_false') {
-            correctDisplay = Number(keyItem.ans) === 0 ? 'True' : 'False';
+            const s = String(keyItem.ans ?? '').trim().toLowerCase();
+            const isT = keyItem.ans === true || ['true', 't', 'yes', '0'].includes(s) || keyItem.ans === 0;
+            correctDisplay = isT ? 'True' : 'False';
         }
         else if (qType === 'fill_blank') {
-            correctDisplay = Array.isArray(keyItem.answers) ? keyItem.answers.join(' / ') : keyItem.answer || '';
+            correctDisplay = Array.isArray(keyItem.answers) ? keyItem.answers.join(' / ') : keyItem.answer || String(keyItem.ans ?? '');
         }
         return {
             qIndex: idx,

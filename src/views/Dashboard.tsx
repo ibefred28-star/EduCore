@@ -21,6 +21,7 @@ import { isStudentInTeacherClasses } from '../lib/classUtils';
 import { CLASS_OPTIONS } from '../constants';
 import TeacherCAScoreEntry from './TeacherCAScoreEntry';
 import CAReportCardView from './CAReportCardView';
+import GradingDiagnosticView from './GradingDiagnosticView';
 import {
   LayoutDashboard,
   Users,
@@ -50,7 +51,8 @@ import {
   User,
   ChevronRight,
   ChevronDown,
-  School
+  School,
+  Wrench
 } from 'lucide-react';
 
 interface NavItemDef {
@@ -93,6 +95,7 @@ export default function Dashboard() {
             { id: 'Exams', label: 'Exams', icon: FileSpreadsheet },
             { id: 'Live Exam', label: 'Live Exam', icon: Radio, badge: 'Live', badgeColor: 'bg-rose-500' },
             { id: 'Results', label: 'Results', icon: Award },
+            { id: 'Grading Diagnostics', label: 'Grading Diagnostics', icon: Wrench, badge: 'Tool', badgeColor: 'bg-indigo-600' },
             { id: 'Attendance', label: 'Attendance', icon: CalendarCheck }
           ]
         },
@@ -131,6 +134,7 @@ export default function Dashboard() {
             { id: 'Exams', label: 'Exams', icon: FileSpreadsheet },
             { id: 'Live Exam', label: 'Live Exam', icon: Radio, badge: 'Live', badgeColor: 'bg-rose-500' },
             { id: 'Results', label: 'Results', icon: Award },
+            { id: 'Grading Diagnostics', label: 'Grading Diagnostics', icon: Wrench, badge: 'Tool', badgeColor: 'bg-indigo-600' },
             { id: 'Attendance', label: 'Attendance', icon: CalendarCheck }
           ]
         },
@@ -163,17 +167,6 @@ export default function Dashboard() {
             { id: 'My Results', label: 'My Results', icon: Award },
             { id: 'My Analytics', label: 'My Analytics', icon: BarChart3 }
           ]
-        },
-        {
-          category: 'Reports & Assessments',
-          items: [
-            { id: 'Reports Hub', label: 'Reports Hub', icon: Files },
-            { id: 'CA 1 Report Card', label: 'CA 1 Report Card', icon: FileCheck, sub: true, badge: '20' },
-            { id: 'CA 2 Report Card', label: 'CA 2 Report Card', icon: FileCheck2, sub: true, badge: '20' },
-            { id: 'Combined CA Report', label: 'Combined CA Report', icon: FolderCheck, sub: true, badge: '40' },
-            { id: 'Academic Report Card', label: 'Academic Report', icon: GraduationCap, sub: true },
-            { id: 'AFL Report Card', label: 'AFL Report', icon: Sparkles, sub: true }
-          ]
         }
       ];
     
@@ -192,21 +185,22 @@ export default function Dashboard() {
       case 'Subjects': return currentRole === 'admin' ? <SubjectsList /> : null;
       case 'CA Score Entry': return currentRole !== 'student' ? <TeacherCAScoreEntry /> : null;
       case 'CA 1 Report':
-      case 'CA 1 Report Card': return <CAReportCardView initialType="CA1" />;
+      case 'CA 1 Report Card': return currentRole !== 'student' ? <CAReportCardView initialType="CA1" /> : null;
       case 'CA 2 Report':
-      case 'CA 2 Report Card': return <CAReportCardView initialType="CA2" />;
-      case 'Combined CA Report': return <CAReportCardView initialType="Combined" />;
+      case 'CA 2 Report Card': return currentRole !== 'student' ? <CAReportCardView initialType="CA2" /> : null;
+      case 'Combined CA Report': return currentRole !== 'student' ? <CAReportCardView initialType="Combined" /> : null;
       case 'Academic Report':
-      case 'Academic Report Card': return <ReportsView initialCategory="academic" />;
+      case 'Academic Report Card': return currentRole !== 'student' ? <ReportsView initialCategory="academic" /> : null;
       case 'AFL Report':
-      case 'AFL Report Card': return <ReportsView initialCategory="afl" />;
+      case 'AFL Report Card': return currentRole !== 'student' ? <ReportsView initialCategory="afl" /> : null;
       case 'Question Bank': return currentRole !== 'student' ? <QuestionBankView /> : null;
       case 'Exams': return currentRole !== 'student' ? <ExamsManager /> : null;
       case 'Live Exam': return currentRole !== 'student' ? <LiveExamMonitoring /> : null;
       case 'Results': return <ResultsView studentOnly={false} />;
       case 'My Results': return <ResultsView studentOnly={true} />;
+      case 'Grading Diagnostics': return currentRole !== 'student' ? <GradingDiagnosticView /> : null;
       case 'Reports':
-      case 'Reports Hub': return <ReportsView initialCategory="academic" />;
+      case 'Reports Hub': return currentRole !== 'student' ? <ReportsView initialCategory="academic" /> : null;
       case 'Analytics':
       case 'My Analytics':
         return <AnalyticsView />;
