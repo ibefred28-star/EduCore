@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { useStore } from '../store';
 import { useToastStore } from '../store/toast';
 import { Button, Modal, Textarea, Input } from '../components/ui';
@@ -7,7 +7,7 @@ import { FunctionsService } from '../lib/functions/functionsService';
 import { ResultRepository } from '../lib/firestore/repositories/resultRepository';
 import { useStudentResultsSubscription } from '../hooks/useDomainSubscriptions';
 import { CheckCircle2, Clock, Award, AlertCircle, FileText, Wrench, ShieldAlert } from 'lucide-react';
-import { evaluateAnswer, calculateGradeAndRemark, formatOptionDisplay, evaluateAttempt } from '../lib/scoringEngine';
+import { evaluateAnswer, calculateGradeAndRemark, formatOptionDisplay, evaluateAttempt, resolveAuthoritativeQuestions } from '../lib/scoringEngine';
 import GradingDiagnosticView from './GradingDiagnosticView';
 
 export default function ResultsView({ studentOnly = false }: { studentOnly?: boolean }) {
@@ -48,10 +48,29 @@ export default function ResultsView({ studentOnly = false }: { studentOnly?: boo
   const rs = useMemo(() => {
     let list = data.results;
     if (isStudent) {
+      const studentLocal = list.filter(r => r.studentId === currentUser?.id);
       if (liveStudentResults && liveStudentResults.length > 0) {
-        return liveStudentResults as any[];
+        const map = new Map<string, any>();
+        studentLocal.forEach(r => map.set(String(r.id), r));
+        liveStudentResults.forEach(r => {
+          const existing = map.get(String(r.id));
+          if (existing && existing.raw > 0 && (!r.raw || r.raw === 0)) {
+            map.set(String(r.id), {
+              ...r,
+              raw: existing.raw,
+              rawMax: existing.rawMax,
+              percentage: existing.percentage,
+              grade: existing.grade,
+              remark: existing.remark,
+              breakdown: existing.breakdown || r.breakdown
+            });
+          } else {
+            map.set(String(r.id), r);
+          }
+        });
+        return Array.from(map.values());
       }
-      return list.filter(r => r.studentId === currentUser?.id);
+      return studentLocal;
     } else if (currentRole === 'teacher') {
       return list.filter(r => {
         const student = data.students.find(s => s.id === r.studentId);
@@ -60,6 +79,62 @@ export default function ResultsView({ studentOnly = false }: { studentOnly?: boo
     }
     return list;
   }, [data.results, isStudent, liveStudentResults, currentUser?.id, currentRole, data.students, teacherClasses]);
+
+  // Auto-reconcile results that have answers but raw score is 0 due to sanitized keys at submit time
+  useEffect(() => {
+    const listToScan: any[] = [...(data.results || []), ...(liveStudentResults || [])];
+    const seen = new Set<string>();
+    const fixableResults = listToScan.filter((r: any) => {
+      if (!r || !r.id || seen.has(String(r.id))) return false;
+      seen.add(String(r.id));
+      return (r.raw === 0 || r.raw === null || r.raw === undefined) &&
+             r.answers &&
+             Object.keys(r.answers).length > 0;
+    });
+
+    if (fixableResults.length === 0) return;
+
+    fixableResults.forEach(async (r: any) => {
+      const exam = data.exams.find(e => String(e.id) === String(r.examId));
+      const questions = await resolveAuthoritativeQuestions(
+        r.examId,
+        exam?.questions || [],
+        data.exams,
+        data.questions,
+        schoolId
+      );
+      if (!questions || questions.length === 0) return;
+      const evaluated = evaluateAttempt(questions, r.answers, config, r.type);
+      if (evaluated.rawScore > 0 && evaluated.rawScore !== r.raw) {
+        updateData(draft => {
+          const rec = draft.results.find(x => String(x.id) === String(r.id));
+          if (rec) {
+            rec.raw = evaluated.rawScore;
+            rec.rawMax = evaluated.rawMax;
+            rec.percentage = evaluated.percentage;
+            rec.scaled = evaluated.scaledScore;
+            rec.max = evaluated.maxComponentMark;
+            rec.grade = evaluated.grade;
+            rec.remark = evaluated.remark;
+            rec.breakdown = evaluated.breakdown;
+          }
+        });
+        if (schoolId) {
+          ResultRepository.recordGradedResult(schoolId, {
+            ...r,
+            raw: evaluated.rawScore,
+            rawMax: evaluated.rawMax,
+            percentage: evaluated.percentage,
+            scaled: evaluated.scaledScore,
+            max: evaluated.maxComponentMark,
+            grade: evaluated.grade,
+            remark: evaluated.remark,
+            breakdown: evaluated.breakdown
+          } as any).catch(console.warn);
+        }
+      }
+    });
+  }, [data.results, liveStudentResults, data.exams, data.questions, config, schoolId]);
 
   const openReview = async (r: any) => {
     setIsLoadingReview(true);
@@ -99,19 +174,26 @@ export default function ResultsView({ studentOnly = false }: { studentOnly?: boo
           isAuthoritative: true
         });
       } else {
-        // 2. Graceful fallback for local offline demo preview
+        // 2. Graceful fallback for local offline / client evaluation
         if (!exam) {
           showToast('Assessment details are not available');
           setIsLoadingReview(false);
           return;
         }
 
-        const questions = exam.questions || [];
+        const rawQuestions = exam.questions || [];
+        const questions = await resolveAuthoritativeQuestions(
+          r.examId,
+          rawQuestions,
+          data.exams,
+          data.questions,
+          schoolId
+        );
         const studentAnswers = r.answers || {};
         const initialMarks: Record<number, number> = {};
 
         const items = questions.map((q: any, idx: number) => {
-          const ans = studentAnswers[idx];
+          const ans = studentAnswers[idx] !== undefined ? studentAnswers[idx] : studentAnswers[String(idx)];
           const evalRes = evaluateAnswer(q, ans);
           const qType = q.type || 'mcq';
           const maxMarks = evalRes.maxMarks;
@@ -134,16 +216,59 @@ export default function ResultsView({ studentOnly = false }: { studentOnly?: boo
           };
         });
 
+        // Compute evaluated true score from questions
+        const evaluatedRaw = items.reduce((acc: number, it: any) => acc + (it.awardedMarks || 0), 0);
+        const evaluatedMax = items.reduce((acc: number, it: any) => acc + (it.maxMarks || 1), 0);
+        const evaluatedPct = evaluatedMax > 0 ? Math.round((evaluatedRaw / evaluatedMax) * 100) : 0;
+        const { grade: evalGrade, remark: evalRemark } = calculateGradeAndRemark(evaluatedPct, config.grades);
+
+        // If recorded raw score was 0 but evaluation shows earned points, heal immediately!
+        const finalRaw = (r.raw === 0 && evaluatedRaw > 0) ? evaluatedRaw : (r.raw !== undefined ? r.raw : evaluatedRaw);
+        const finalMax = evaluatedMax > 0 ? evaluatedMax : (r.rawMax || items.length);
+        const finalPct = (r.raw === 0 && evaluatedRaw > 0) ? evaluatedPct : (r.percentage ?? evaluatedPct);
+        const finalGrade = (r.raw === 0 && evaluatedRaw > 0) ? evalGrade : (r.grade || evalGrade);
+        const finalRemark = (r.raw === 0 && evaluatedRaw > 0) ? evalRemark : (r.remark || evalRemark);
+
+        if (r.raw === 0 && evaluatedRaw > 0) {
+          updateData(draft => {
+            const rec = draft.results.find(x => x.id === r.id);
+            if (rec) {
+              rec.raw = finalRaw;
+              rec.rawMax = finalMax;
+              rec.percentage = finalPct;
+              rec.grade = finalGrade;
+              rec.remark = finalRemark;
+            }
+          });
+          if (schoolId) {
+            ResultRepository.recordGradedResult(schoolId, {
+              ...r,
+              raw: finalRaw,
+              rawMax: finalMax,
+              percentage: finalPct,
+              grade: finalGrade,
+              remark: finalRemark
+            } as any).catch(console.warn);
+          }
+        }
+
         setManualMarks(initialMarks);
         setReviewResult({
-          resultRecord: r,
+          resultRecord: {
+            ...r,
+            raw: finalRaw,
+            rawMax: finalMax,
+            percentage: finalPct,
+            grade: finalGrade,
+            remark: finalRemark
+          },
           examTitle: exam.title,
           items,
-          score: r.raw,
-          rawMax: r.rawMax,
-          percentage: r.percentage ?? (r.rawMax > 0 ? Math.round((r.raw / r.rawMax) * 100) : 0),
-          grade: r.grade,
-          remark: r.remark,
+          score: finalRaw,
+          rawMax: finalMax,
+          percentage: finalPct,
+          grade: finalGrade,
+          remark: finalRemark,
           gradingStatus: r.gradingStatus || 'final',
           teacherFeedback: r.teacherFeedback || '',
           isAuthoritative: false
@@ -312,7 +437,16 @@ export default function ResultsView({ studentOnly = false }: { studentOnly?: boo
               ) : (
                 rs.map(r => {
                   const s = data.students.find(x => x.id === r.studentId);
-                  const pct = r.percentage ?? (r.rawMax > 0 ? Math.round((r.raw / r.rawMax) * 100) : 0);
+                  const breakdownTotal = (r.breakdown && Array.isArray(r.breakdown) && r.breakdown.length > 0)
+                    ? r.breakdown.reduce((acc: number, b: any) => acc + (b.awardedMarks || 0), 0)
+                    : null;
+                  const displayRaw = (r.raw === 0 && breakdownTotal !== null && breakdownTotal > 0)
+                    ? breakdownTotal
+                    : (r.raw ?? 0);
+                  const displayRawMax = r.rawMax > 0 ? r.rawMax : (r.breakdown?.length || 17);
+                  const pct = (r.raw === 0 && breakdownTotal !== null && breakdownTotal > 0)
+                    ? Math.round((displayRaw / displayRawMax) * 100)
+                    : (r.percentage ?? (displayRawMax > 0 ? Math.round((displayRaw / displayRawMax) * 100) : 0));
                   const isPendingManual = r.gradingStatus === 'pending_manual';
 
                   return (
@@ -321,7 +455,7 @@ export default function ResultsView({ studentOnly = false }: { studentOnly?: boo
                       <td className="p-3 text-slate-600">{s?.class || '—'}</td>
                       <td className="p-3 font-medium">{r.subject}</td>
                       <td className="p-3 text-slate-600">{r.type}</td>
-                      <td className="p-3 font-semibold text-slate-700">{r.raw} / {r.rawMax}</td>
+                      <td className="p-3 font-semibold text-slate-700">{displayRaw} / {displayRawMax}</td>
                       <td className="p-3 font-bold text-indigo-700">
                         {r.max ? `${r.scaled} / ${r.max}` : `${pct}%`}
                       </td>

@@ -2,7 +2,7 @@ import { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import { useStore } from '../store';
 import { useToastStore } from '../store/toast';
 import { Button, Input } from '../components/ui';
-import { Student } from '../types';
+import { Student, Exam } from '../types';
 import { useExamsSubscription } from '../hooks/useDomainSubscriptions';
 import {
   startStudentLiveSession,
@@ -12,9 +12,13 @@ import {
   completeStudentLiveSession
 } from '../lib/liveExamService';
 import { AttemptRepository } from '../lib/firestore/repositories/attemptRepository';
+import { ResultRepository } from '../lib/firestore/repositories/resultRepository';
 import { FunctionsService } from '../lib/functions/functionsService';
 import { CbtEngine, AttemptLifecycleState } from '../lib/cbt/cbtEngine';
-import { evaluateAttempt } from '../lib/scoringEngine';
+import { evaluateAttempt, resolveAuthoritativeQuestions } from '../lib/scoringEngine';
+import { db } from '../firebase';
+import { doc, setDoc } from 'firebase/firestore';
+import { FirestorePaths } from '../lib/firestore/paths';
 import confetti from 'canvas-confetti';
 
 export default function CBT() {
@@ -25,8 +29,19 @@ export default function CBT() {
   const { exams: liveExams } = useExamsSubscription(schoolId, studentClass);
 
   const effectiveExams = useMemo(() => {
-    if (liveExams && liveExams.length > 0) return liveExams;
-    return data.exams;
+    const map = new Map<string, Exam>();
+    // First load data.exams (which has full questions with answer keys)
+    (data.exams || []).forEach(e => map.set(String(e.id), e));
+    // Overlay liveExams, but preserve questions with answer keys if data.exams had them
+    (liveExams || []).forEach(e => {
+      const existing = map.get(String(e.id));
+      if (existing && existing.questions && existing.questions.some(q => q.ans !== undefined || q.answer !== undefined)) {
+        map.set(String(e.id), { ...e, questions: existing.questions } as Exam);
+      } else {
+        map.set(String(e.id), e as Exam);
+      }
+    });
+    return Array.from(map.values());
   }, [liveExams, data.exams]);
 
   const exam = effectiveExams.find(e => String(e.id) === String(activeExamId));
@@ -171,7 +186,9 @@ export default function CBT() {
     document.addEventListener('paste', block);
     
     try {
-      document.documentElement.requestFullscreen?.().catch(() => {});
+      if (document.fullscreenEnabled) {
+        document.documentElement.requestFullscreen?.().catch(() => {});
+      }
     } catch (e) {}
 
     return () => {
@@ -277,72 +294,99 @@ export default function CBT() {
     completeStudentLiveSession(schoolId, exam.id, currentUser.id, auto);
 
     try {
-      // 1. Submit through Cloud Functions authoritative grading
-      const serverResult = await FunctionsService.submitExamAttempt(
-        schoolId,
-        attemptId,
+      // 1. Resolve authoritative questions with true answer keys across store, Firestore examKeys, and bank
+      const resolvedQuestions = await resolveAuthoritativeQuestions(
         exam.id,
-        answersRef.current,
-        violationsRef.current
+        rawQuestions,
+        data.exams,
+        data.questions,
+        schoolId
       );
 
-      // Clear local draft after confirmed submission
+      // 2. Authoritative local scoring
+      const evaluated = evaluateAttempt(resolvedQuestions, answersRef.current, config, exam.type);
+
+      // 3. Clear local draft after confirmed submission
       CbtEngine.clearLocalDraft(attemptId);
 
-      let finalScore = 0;
-      let finalRawMax = sanitizedQs.length;
-      let finalPct = 0;
-      let finalGrade = 'Pass';
-      let finalRemark = 'Completed';
-
-      if (serverResult && serverResult.percentage !== undefined) {
-        finalScore = serverResult.raw;
-        finalRawMax = serverResult.rawMax;
-        finalPct = serverResult.percentage;
-        finalGrade = serverResult.grade;
-        finalRemark = serverResult.remark;
-      } else {
-        // Authoritative fallback grading using unified scoring engine
-        const evaluated = evaluateAttempt(rawQuestions, answersRef.current, config, exam.type);
-        finalScore = evaluated.rawScore;
-        finalRawMax = evaluated.rawMax;
-        finalPct = evaluated.percentage;
-        finalGrade = evaluated.grade;
-        finalRemark = evaluated.remark;
+      // 4. Try Cloud Functions submission if deployed
+      let serverResult: any = null;
+      try {
+        serverResult = await FunctionsService.submitExamAttempt(
+          schoolId,
+          attemptId,
+          exam.id,
+          answersRef.current,
+          violationsRef.current
+        );
+      } catch (err) {
+        console.info('Cloud Functions submission bypassed, using evaluated score:', err);
       }
 
-      // Record in local store for immediate client dashboard feedback
+      let finalScore = evaluated.rawScore;
+      let finalRawMax = evaluated.rawMax > 0 ? evaluated.rawMax : sanitizedQs.length;
+      let finalPct = evaluated.percentage;
+      let finalGrade = evaluated.grade;
+      let finalRemark = evaluated.remark;
+
+      if (serverResult && serverResult.percentage !== undefined && serverResult.raw !== undefined) {
+        // Only accept server result if it does NOT overwrite a verified positive evaluated score with 0
+        if (!(evaluated.rawScore > 0 && Number(serverResult.raw) === 0)) {
+          finalScore = serverResult.raw;
+          finalRawMax = serverResult.rawMax || finalRawMax;
+          finalPct = serverResult.percentage;
+          finalGrade = serverResult.grade || finalGrade;
+          finalRemark = serverResult.remark || finalRemark;
+        }
+      }
+
+      // 5. Build official result record with full breakdown
       const localResultRecord = {
-        id: serverResult?.id || Date.now(),
+        id: serverResult?.id || `res_${exam.id}_${currentUser.id}_${Date.now()}`,
         studentId: currentUser.id,
         examId: exam.id,
         subject: exam.subject,
         type: exam.type,
         raw: finalScore,
         rawMax: finalRawMax,
-        scaled: serverResult?.scaled ?? null,
-        max: serverResult?.max ?? null,
+        scaled: serverResult?.scaled ?? evaluated.scaledScore,
+        max: serverResult?.max ?? evaluated.maxComponentMark,
         percentage: finalPct,
         grade: finalGrade,
         remark: finalRemark,
-        gradingStatus: (serverResult?.gradingStatus || 'final') as 'final' | 'pending_manual',
-        breakdown: serverResult?.breakdown || [],
+        gradingStatus: (serverResult?.gradingStatus || evaluated.gradingStatus || 'final') as 'final' | 'pending_manual',
+        breakdown: (serverResult?.breakdown && serverResult.breakdown.length > 0) ? serverResult.breakdown : evaluated.breakdown,
         violations: violationsRef.current,
-        answers: answersRef.current,
+        answers: { ...answersRef.current },
         attempt: (data.results.filter(r => r.studentId === currentUser.id && r.examId === exam.id).length) + 1,
         attemptsAllowed: Math.max(1, exam.attempts || 1),
         submittedAt: new Date().toISOString(),
         gradedAt: serverResult?.gradedAt || new Date().toISOString()
       };
 
+      // 6. Record in local store for immediate client dashboard feedback
       updateData(draft => {
-        draft.results.push(localResultRecord);
+        const existingIdx = draft.results.findIndex(r => r.id === localResultRecord.id);
+        if (existingIdx >= 0) {
+          draft.results[existingIdx] = localResultRecord as any;
+        } else {
+          draft.results.push(localResultRecord as any);
+        }
       });
 
-      if (finalPct >= 50) {
+      // 7. Persist to Firestore results collection
+      if (schoolId) {
+        await ResultRepository.recordGradedResult(schoolId, localResultRecord as any).catch(err => {
+          console.warn('Could not persist result to Firestore:', err);
+        });
+      }
+
+      // 8. Celebratory confetti animation ONLY on pass and score > 0! Never fire on 0 score.
+      if (finalPct >= 50 && finalScore > 0) {
         confetti({ particleCount: 150, spread: 70, origin: { y: 0.6 } });
       }
 
+      // 9. Display authoritative score on completion screen
       setSubmissionResult({
         score: finalScore,
         rawMax: finalRawMax,
@@ -361,22 +405,28 @@ export default function CBT() {
     setShowConfirm(true);
   };
 
-  if (!exam) {
-    return (
-      <div className="min-h-screen bg-slate-50 p-6 flex flex-col items-center justify-center text-center">
-        <h3 className="text-xl font-bold text-slate-800 mb-2">Exam Session Not Found</h3>
-        <p className="text-slate-500 text-sm mb-4">The selected examination could not be loaded or is no longer active.</p>
-        <Button onClick={() => useStore.setState({ activeExamId: null })}>Return to Dashboard</Button>
-      </div>
-    );
-  }
-
   // Loading Screen
   if (isInitializing) {
     return (
       <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center gap-3">
         <div className="w-12 h-12 border-4 border-indigo-200 border-t-indigo-600 rounded-full animate-spin" />
         <p className="text-slate-600 font-medium">Securing and launching exam session...</p>
+      </div>
+    );
+  }
+
+  if (!exam || sanitizedQs.length === 0) {
+    return (
+      <div className="min-h-screen bg-slate-50 p-6 flex flex-col items-center justify-center text-center">
+        <h3 className="text-xl font-bold text-slate-800 mb-2">
+          {!exam ? 'Exam Session Not Found' : 'No Questions Found'}
+        </h3>
+        <p className="text-slate-500 text-sm mb-4">
+          {!exam 
+            ? 'The selected examination could not be loaded or is no longer active.' 
+            : 'This examination does not have any questions configured yet. Please contact your teacher.'}
+        </p>
+        <Button onClick={() => useStore.setState({ activeExamId: null })}>Return to Dashboard</Button>
       </div>
     );
   }
@@ -436,7 +486,7 @@ export default function CBT() {
             </div>
             
             {/* Server-authoritative timer display */}
-            <div className={`text-4xl font-black bg-red-50 border-4 rounded-xl px-4 py-2 shadow-sm ${timeLeft <= 60 ? 'border-red-600 text-red-600 animate-pulse' : 'border-slate-800 text-slate-800'}`}>
+            <div className={`text-2xl sm:text-4xl font-black bg-red-50 border-2 sm:border-4 rounded-xl px-3 sm:px-4 py-1.5 sm:py-2 shadow-sm shrink-0 ${timeLeft <= 60 ? 'border-red-600 text-red-600 animate-pulse' : 'border-slate-800 text-slate-800'}`}>
               {String(Math.floor(timeLeft / 60)).padStart(2, '0')}:{String(timeLeft % 60).padStart(2, '0')}
             </div>
           </div>
@@ -489,8 +539,14 @@ export default function CBT() {
               })
             )}
             
-            {type === 'diagram' && q.image && (
-              <img src={q.image} alt="Diagram" className="max-w-full max-h-[360px] block my-2 rounded-xl" />
+            {q.image && (
+              <div className="my-3">
+                <img 
+                  src={q.image} 
+                  alt="Reference diagram / question visual" 
+                  className="max-w-full max-h-[360px] object-contain block rounded-xl border border-slate-200 shadow-xs bg-white" 
+                />
+              </div>
             )}
             
             {(type === 'mcq' || type === 'diagram') && (

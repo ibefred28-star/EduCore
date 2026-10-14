@@ -48,9 +48,16 @@ export default function QuestionBankView() {
   const { questions: liveQuestions, loading: questionsLoading } = useQuestionBankSubscription(schoolId);
   const questions: BankQuestion[] = useMemo(() => {
     const map = new Map<string, BankQuestion>();
-    // Add local store questions first or live questions first
-    (data.questions || []).forEach(q => map.set(q.id, q));
-    (liveQuestions || []).forEach(q => map.set(q.id, { ...q, subtopic: q.subtopic || '' } as BankQuestion));
+    (data.questions || []).forEach(q => map.set(String(q.id), q));
+    (liveQuestions || []).forEach(q => {
+      const existing = map.get(String(q.id));
+      map.set(String(q.id), {
+        ...existing,
+        ...q,
+        image: q.image || existing?.image || '',
+        subtopic: q.subtopic || existing?.subtopic || ''
+      } as BankQuestion);
+    });
     return Array.from(map.values());
   }, [liveQuestions, data.questions]);
   const exams: Exam[] = data.exams || [];

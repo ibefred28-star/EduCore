@@ -165,6 +165,7 @@ export interface FirestoreResultDoc {
   remark: string;
   gradingStatus?: 'final' | 'pending_manual';
   breakdown?: any[];
+  answers?: Record<string | number, any>;
   teacherFeedback?: string;
   finalizedBy?: string;
   attempt: number;

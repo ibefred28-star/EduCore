@@ -44,8 +44,32 @@ export default function GradingDiagnosticView() {
     return (data.results || []).map(r => {
       const student = data.students.find(s => s.id === r.studentId);
       const exam = data.exams.find(e => String(e.id) === String(r.examId));
-      const questions = exam?.questions || [];
+      let questions = exam?.questions || [];
       const submittedAnswers = r.answers || {};
+
+      // If exam questions lack answer keys, enrich from Question Bank
+      if (questions.length > 0 && !questions.every(q => q && (q.ans !== undefined || q.answer !== undefined || (Array.isArray(q.answers) && q.answers.length > 0)))) {
+        questions = questions.map((q, idx) => {
+          if (q.ans !== undefined || q.answer !== undefined || (Array.isArray(q.answers) && q.answers.length > 0)) return q;
+          const bq = (data.questions || []).find((b: any) =>
+            (b.id && q.bankQuestionId && String(b.id) === String(q.bankQuestionId)) ||
+            (b.id && q.id && String(b.id) === String(q.id)) ||
+            (b.q && q.q && String(b.q).trim().toLowerCase() === String(q.q).trim().toLowerCase())
+          );
+          if (bq && (bq.ans !== undefined || bq.answer !== undefined || (Array.isArray(bq.answers) && bq.answers.length > 0))) {
+            return {
+              ...q,
+              type: q.type || bq.type || 'mcq',
+              ans: bq.ans,
+              answer: bq.answer,
+              answers: bq.answers,
+              options: (Array.isArray(q.options) && q.options.length > 0) ? q.options : bq.options,
+              marks: q.marks || bq.marks || 1
+            };
+          }
+          return q;
+        });
+      }
 
       let evaluated = null;
       let hasDiscrepancy = false;

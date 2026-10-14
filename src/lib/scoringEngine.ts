@@ -1,5 +1,8 @@
 import { Question, Grade, Config } from '../types';
 import { DEFAULT_CONFIG } from '../constants';
+import { db } from '../firebase';
+import { doc, getDoc } from 'firebase/firestore';
+import { FirestorePaths, cleanId } from './firestore/paths';
 
 /**
  * Normalizes True/False values across representations:
@@ -123,10 +126,11 @@ export function evaluateAnswer(
       explanation = 'Subjective question requires teacher review and manual marks.';
     }
   } else if (qType === 'true_false') {
+    const rawVal = q.ans !== undefined ? q.ans : (q.answer !== undefined ? q.answer : (Array.isArray(q.answers) ? q.answers[0] : undefined));
     const sNorm = normalizeTrueFalse(studentAnswer);
-    const cNorm = normalizeTrueFalse(q.ans);
+    const cNorm = normalizeTrueFalse(rawVal);
 
-    correctDisplay = cNorm !== null ? (cNorm ? 'True' : 'False') : String(q.ans ?? 'True');
+    correctDisplay = cNorm !== null ? (cNorm ? 'True' : 'False') : String(rawVal ?? 'True');
     studentDisplay = hasStudentAns ? (sNorm !== null ? (sNorm ? 'True' : 'False') : String(studentAnswer)) : 'No answer';
 
     if (hasStudentAns && sNorm !== null && cNorm !== null) {
@@ -162,11 +166,14 @@ export function evaluateAnswer(
     }
   } else {
     // MCQ & Diagram Questions
-    const rawCorrect = q.ans;
+    const rawCorrect = q.ans !== undefined
+      ? q.ans
+      : (q.answer !== undefined ? q.answer : (Array.isArray(q.answers) && q.answers.length > 0 ? q.answers[0] : undefined));
+
     correctDisplay = formatOptionDisplay(rawCorrect, options);
     studentDisplay = hasStudentAns ? formatOptionDisplay(studentAnswer, options) : 'No answer';
 
-    if (hasStudentAns) {
+    if (hasStudentAns && rawCorrect !== undefined && rawCorrect !== null && rawCorrect !== '') {
       // 1. Direct equality (numeric or string)
       if (Number(studentAnswer) === Number(rawCorrect)) {
         isCorrect = true;
@@ -215,14 +222,19 @@ export function evaluateAnswer(
         } else if (LETTER_MAP[cStr] !== undefined && LETTER_MAP[cStr] === Number(studentAnswer)) {
           isCorrect = true;
           explanation = `Choice index ${studentAnswer} matches correct letter "${cStr.toUpperCase()}".`;
+        } else if (LETTER_MAP[sStr] !== undefined && LETTER_MAP[cStr] !== undefined && LETTER_MAP[sStr] === LETTER_MAP[cStr]) {
+          isCorrect = true;
+          explanation = `Both student and answer resolve to choice "${sStr.toUpperCase()}".`;
         }
       }
 
       if (!isCorrect) {
         explanation = `Incorrect: Student chose ${studentDisplay}, correct answer is ${correctDisplay}.`;
       }
-    } else {
+    } else if (!hasStudentAns) {
       explanation = 'No option chosen.';
+    } else {
+      explanation = 'Answer key missing for this question.';
     }
   }
 
@@ -358,3 +370,188 @@ export function evaluateAttempt(
     breakdown
   };
 }
+
+/**
+ * Resolves authoritative questions containing true answer keys across:
+ * 1. Questions themselves (if already possessing answer keys)
+ * 2. Store Exams (which preserve un-sanitized authoring questions with answer keys)
+ * 3. Firestore schools/{schoolId}/examKeys/{examId} collection
+ * 4. Question Bank (data.questions) matching by question ID or text
+ */
+export async function resolveAuthoritativeQuestions(
+  examId: string | number,
+  candidateQuestions: any[] = [],
+  storeExams: any[] = [],
+  bankQuestions: any[] = [],
+  schoolId?: string | null
+): Promise<any[]> {
+  // Check if all candidate questions already possess valid answer keys
+  const allHaveKeys = candidateQuestions.length > 0 && candidateQuestions.every(
+    q => q && (
+      q.ans !== undefined ||
+      (typeof q.answer === 'string' && q.answer.trim() !== '') ||
+      (Array.isArray(q.answers) && q.answers.length > 0)
+    )
+  );
+
+  if (allHaveKeys) {
+    return candidateQuestions;
+  }
+
+  const cleanExamId = String(examId).trim().toLowerCase();
+
+  // 1. Look in storeExams (master exams before candidate-side sanitization)
+  const storeExam = storeExams.find(
+    e => String(e.id).trim().toLowerCase() === cleanExamId || String(e.id) === String(examId)
+  );
+
+  // 2. Fetch from Firestore examKeys collection if schoolId is provided
+  let firestoreKeys: any[] = [];
+  if (schoolId) {
+    const pathsToTry = [
+      FirestorePaths.examKey(schoolId, examId),
+      FirestorePaths.examKey(schoolId, cleanExamId),
+      `schools/${schoolId.trim().toLowerCase()}/examKeys/${cleanExamId}`,
+      `schools/${schoolId}/examKeys/${String(examId)}`,
+      `schools/${schoolId.trim().toLowerCase()}/examKeys/${String(examId)}`
+    ];
+    for (const p of pathsToTry) {
+      if (firestoreKeys.length > 0) break;
+      try {
+        const keySnap = await getDoc(doc(db, p));
+        if (keySnap.exists()) {
+          const kData = keySnap.data()?.keys;
+          if (Array.isArray(kData) && kData.length > 0) {
+            firestoreKeys = kData;
+          }
+        }
+      } catch (err) {
+        // Fallback to next path
+      }
+    }
+
+    // 2b. Secondary Firestore fallback: check app_state/{schoolId} for authoring exam questions with answers
+    if (firestoreKeys.length === 0) {
+      try {
+        const appStateSnap = await getDoc(doc(db, 'app_state', schoolId));
+        if (appStateSnap.exists()) {
+          const stateData = appStateSnap.data()?.state;
+          const remoteExams = stateData?.exams;
+          if (Array.isArray(remoteExams)) {
+            const rx = remoteExams.find(
+              (e: any) => String(e.id).trim().toLowerCase() === cleanExamId || String(e.id) === String(examId)
+            );
+            if (rx?.questions && Array.isArray(rx.questions) && rx.questions.some((q: any) => q.ans !== undefined || q.answer !== undefined)) {
+              return rx.questions;
+            }
+          }
+        }
+      } catch (err) {
+        // Fallback to next strategy
+      }
+    }
+  }
+
+  // 3. Fallback to Question Bank (data.questions) matching
+  const baseQuestions = candidateQuestions.length > 0
+    ? candidateQuestions
+    : (Array.isArray(storeExam?.questions) && storeExam.questions.length > 0 ? storeExam.questions : []);
+
+  return baseQuestions.map((q, idx) => {
+    // If q already has a key, preserve it
+    const hasKey = q.ans !== undefined ||
+      (typeof q.answer === 'string' && q.answer.trim() !== '') ||
+      (Array.isArray(q.answers) && q.answers.length > 0);
+
+    if (hasKey) {
+      return q;
+    }
+
+    // 1. Try storeExam matching by index, id, or question text
+    if (storeExam && Array.isArray(storeExam.questions)) {
+      const sq = storeExam.questions[idx] ||
+        storeExam.questions.find((x: any) => x.id && q.id && String(x.id) === String(q.id)) ||
+        storeExam.questions.find((x: any) => x.q && q.q && String(x.q).trim().toLowerCase() === String(q.q).trim().toLowerCase());
+
+      if (sq && (sq.ans !== undefined || sq.answer !== undefined || (Array.isArray(sq.answers) && sq.answers.length > 0))) {
+        return {
+          ...q,
+          type: q.type || sq.type || 'mcq',
+          ans: sq.ans,
+          answer: sq.answer,
+          answers: sq.answers,
+          options: (Array.isArray(q.options) && q.options.length > 0) ? q.options : sq.options,
+          marks: q.marks || sq.marks || 1,
+          image: q.image || sq.image || ''
+        };
+      }
+    }
+
+    // 2. Match from firestoreKeys by index, qIndex, id, or question text
+    const fsKey = firestoreKeys.find((k: any) => k.qIndex === idx) ||
+      firestoreKeys[idx] ||
+      firestoreKeys.find((k: any) => k.q && q.q && String(k.q).trim().toLowerCase() === String(q.q).trim().toLowerCase()) ||
+      firestoreKeys.find((k: any) => k.id && q.id && String(k.id) === String(q.id));
+
+    if (fsKey && (fsKey.ans !== undefined || fsKey.answer !== undefined || (Array.isArray(fsKey.answers) && fsKey.answers.length > 0))) {
+      return {
+        ...q,
+        type: q.type || fsKey.type || 'mcq',
+        ans: fsKey.ans,
+        answer: fsKey.answer,
+        answers: fsKey.answers,
+        options: (Array.isArray(q.options) && q.options.length > 0) ? q.options : fsKey.options,
+        marks: q.marks || fsKey.marks || 1,
+        image: q.image || fsKey.image || ''
+      };
+    }
+
+    // 3. Match from bankQuestions
+    const bq = bankQuestions.find(
+      (b: any) => (b.id && q.bankQuestionId && String(b.id) === String(q.bankQuestionId)) ||
+                  (b.id && q.id && String(b.id) === String(q.id)) ||
+                  (b.q && q.q && String(b.q).trim().toLowerCase() === String(q.q).trim().toLowerCase())
+    );
+    if (bq && (bq.ans !== undefined || bq.answer !== undefined || (Array.isArray(bq.answers) && bq.answers.length > 0))) {
+      return {
+        ...q,
+        type: q.type || bq.type || 'mcq',
+        ans: bq.ans,
+        answer: bq.answer,
+        answers: bq.answers,
+        options: (Array.isArray(q.options) && q.options.length > 0) ? q.options : bq.options,
+        marks: q.marks || bq.marks || 1,
+        image: q.image || bq.image || ''
+      };
+    }
+
+    return q;
+  });
+}
+
+/**
+ * Re-evaluates an existing candidate result against authoritative questions
+ */
+export async function recalculateResultRecord(
+  result: any,
+  exams: any[] = [],
+  bankQuestions: any[] = [],
+  config: Config = DEFAULT_CONFIG,
+  schoolId?: string | null
+): Promise<GradedAttemptResult | null> {
+  if (!result || !result.answers) return null;
+
+  const exam = exams.find(e => String(e.id) === String(result.examId));
+  const questions = await resolveAuthoritativeQuestions(
+    result.examId,
+    exam?.questions || [],
+    exams,
+    bankQuestions,
+    schoolId
+  );
+
+  if (!questions || questions.length === 0) return null;
+
+  return evaluateAttempt(questions, result.answers, config, result.type);
+}
+
