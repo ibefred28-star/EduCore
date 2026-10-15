@@ -19,7 +19,8 @@ import {
   Zap,
   Info,
   Layers,
-  HelpCircle
+  HelpCircle,
+  Trash2
 } from 'lucide-react';
 
 export default function GradingDiagnosticView() {
@@ -31,6 +32,8 @@ export default function GradingDiagnosticView() {
   const [onlyDiscrepancies, setOnlyDiscrepancies] = useState<boolean>(false);
   const [isApplyingFix, setIsApplyingFix] = useState(false);
   const [isBatchFixing, setIsBatchFixing] = useState(false);
+  const [diagnosticResultToDelete, setDiagnosticResultToDelete] = useState<any>(null);
+  const [isDeletingDiagnosticResult, setIsDeletingDiagnosticResult] = useState(false);
 
   // Live Simulator state
   const [simType, setSimType] = useState<'mcq' | 'true_false' | 'fill_blank' | 'diagram'>('true_false');
@@ -221,6 +224,37 @@ export default function GradingDiagnosticView() {
       showToast(err.message || 'Error executing batch fix');
     } finally {
       setIsBatchFixing(false);
+    }
+  };
+
+  const handleDeleteDiagnosticResult = async () => {
+    if (!diagnosticResultToDelete) return;
+    setIsDeletingDiagnosticResult(true);
+    const targetId = String(diagnosticResultToDelete.id);
+    const student = data.students.find(s => s.id === diagnosticResultToDelete.studentId);
+    const studentName = student ? student.name : diagnosticResultToDelete.studentId;
+
+    try {
+      // 1. Update local and shared application store
+      updateData(draft => {
+        draft.results = draft.results.filter(x => String(x.id) !== targetId);
+      });
+
+      // 2. Delete from dedicated Firestore results collection
+      if (schoolId) {
+        await ResultRepository.deleteResult(schoolId, targetId);
+      }
+
+      showToast(`Result for ${studentName} deleted successfully. It will no longer appear on the student dashboard.`);
+      setDiagnosticResultToDelete(null);
+      if (selectedResultId === targetId) {
+        setSelectedResultId('');
+      }
+    } catch (err: any) {
+      console.warn('Error deleting result:', err);
+      showToast(err.message || 'Failed to delete result');
+    } finally {
+      setIsDeletingDiagnosticResult(false);
     }
   };
 
@@ -419,22 +453,34 @@ export default function GradingDiagnosticView() {
                     </div>
                   </div>
 
-                  {activeItem.hasDiscrepancy ? (
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {activeItem.hasDiscrepancy ? (
+                      <Button
+                        variant="primary"
+                        onClick={() => handleApplyFix(activeItem)}
+                        disabled={isApplyingFix}
+                        className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow flex items-center gap-1.5"
+                      >
+                        <CheckCheck className="w-3.5 h-3.5" />
+                        {isApplyingFix ? 'Applying...' : 'Recalculate & Apply Fix'}
+                      </Button>
+                    ) : (
+                      <div className="flex items-center gap-1.5 px-3 py-1 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-lg text-xs font-bold">
+                        <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                        Grading Matches Authoritative Key
+                      </div>
+                    )}
+
                     <Button
-                      variant="primary"
-                      onClick={() => handleApplyFix(activeItem)}
-                      disabled={isApplyingFix}
-                      className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow flex items-center gap-1.5"
+                      variant="danger"
+                      onClick={() => setDiagnosticResultToDelete(activeItem.result)}
+                      className="bg-rose-50 text-rose-700 hover:bg-rose-100 border border-rose-200 text-xs font-bold py-1 px-2.5 flex items-center gap-1.5"
+                      title="Permanently delete this result"
                     >
-                      <CheckCheck className="w-3.5 h-3.5" />
-                      {isApplyingFix ? 'Applying...' : 'Recalculate & Apply Fix'}
+                      <Trash2 className="w-3.5 h-3.5 text-rose-600" />
+                      Delete Result
                     </Button>
-                  ) : (
-                    <div className="flex items-center gap-1.5 px-3 py-1 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-lg text-xs font-bold">
-                      <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                      Grading Matches Authoritative Key
-                    </div>
-                  )}
+                  </div>
                 </div>
 
                 {/* Side-by-side Score Matrix */}
@@ -734,6 +780,76 @@ export default function GradingDiagnosticView() {
           </div>
         </div>
       </div>
+
+      {/* Delete Diagnostic Result Confirmation Modal */}
+      {diagnosticResultToDelete && (
+        <Modal
+          isOpen={!!diagnosticResultToDelete}
+          onClose={() => !isDeletingDiagnosticResult && setDiagnosticResultToDelete(null)}
+        >
+          <div className="space-y-4">
+            <h3 className="text-lg font-bold text-slate-800 m-0">Delete Assessment Result?</h3>
+            <div className="p-4 bg-rose-50 border border-rose-200 rounded-xl flex items-start gap-3">
+              <AlertTriangle className="w-6 h-6 text-rose-600 shrink-0 mt-0.5" />
+              <div className="text-sm text-rose-950">
+                <p className="font-bold mb-1">Permanent Result Removal</p>
+                <p className="text-xs text-rose-900/90 m-0">
+                  Are you sure you want to delete this result for <strong>{data.students.find(s => s.id === diagnosticResultToDelete.studentId)?.name || diagnosticResultToDelete.studentId}</strong> in <strong>{diagnosticResultToDelete.subject}</strong> ({diagnosticResultToDelete.type})?
+                </p>
+              </div>
+            </div>
+
+            <div className="bg-slate-50 p-3.5 rounded-xl text-xs space-y-1.5 text-slate-700 border border-slate-200">
+              <div className="flex justify-between">
+                <span className="text-slate-500">Recorded Score:</span>
+                <span className="font-bold">{diagnosticResultToDelete.raw} / {diagnosticResultToDelete.rawMax} ({diagnosticResultToDelete.percentage ?? 0}%)</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-500">Grade & Remark:</span>
+                <span className="font-bold">{diagnosticResultToDelete.grade || '—'} &bull; {diagnosticResultToDelete.remark || '—'}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-500">Submitted On:</span>
+                <span className="font-bold">{new Date(diagnosticResultToDelete.submittedAt).toLocaleDateString()}</span>
+              </div>
+              <div className="text-emerald-700 font-medium pt-2 border-t border-slate-200 mt-2 flex items-start gap-1.5">
+                <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-600 mt-0.5" />
+                <span>
+                  This result will be immediately deleted from the student's dashboard and records. If exam attempts were exhausted, this will free up an attempt for the student.
+                </span>
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
+              <Button
+                variant="secondary"
+                onClick={() => setDiagnosticResultToDelete(null)}
+                disabled={isDeletingDiagnosticResult}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="danger"
+                onClick={handleDeleteDiagnosticResult}
+                disabled={isDeletingDiagnosticResult}
+                className="flex items-center gap-1.5"
+              >
+                {isDeletingDiagnosticResult ? (
+                  <>
+                    <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    Deleting...
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="w-4 h-4" />
+                    Yes, Delete Result
+                  </>
+                )}
+              </Button>
+            </div>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }

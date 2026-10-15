@@ -4,6 +4,7 @@ import {
   getDoc,
   getDocs,
   setDoc,
+  deleteDoc,
   query,
   where,
   orderBy,
@@ -54,6 +55,18 @@ export const ResultRepository = {
   ): Promise<void> {
     const ref = doc(db, FirestorePaths.result(schoolId, result.id));
     await setDoc(ref, result, { merge: true });
+  },
+
+  /**
+   * Deletes a graded result document from Firestore (Staff access)
+   */
+  async deleteResult(
+    schoolId: string,
+    resultId: string | number
+  ): Promise<void> {
+    if (!schoolId || !resultId) return;
+    const ref = doc(db, FirestorePaths.result(schoolId, String(resultId)));
+    await deleteDoc(ref);
   },
 
   /**

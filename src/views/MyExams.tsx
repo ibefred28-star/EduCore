@@ -19,8 +19,10 @@ export default function MyExams() {
 
   // Fallback to store data if offline or before Firestore populates
   const effectiveResults = useMemo(() => {
-    if (liveResults && liveResults.length > 0) return liveResults;
-    return data.results.filter(r => r.studentId === currentUser?.id);
+    if (liveResults !== null && liveResults !== undefined) {
+      return liveResults;
+    }
+    return (data.results || []).filter(r => r.studentId === currentUser?.id);
   }, [liveResults, data.results, currentUser?.id]);
 
   // Merge local and live exams by ID to ensure all created active exams are displayed

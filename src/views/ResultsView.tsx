@@ -6,7 +6,7 @@ import { isStudentInTeacherClasses } from '../lib/classUtils';
 import { FunctionsService } from '../lib/functions/functionsService';
 import { ResultRepository } from '../lib/firestore/repositories/resultRepository';
 import { useStudentResultsSubscription } from '../hooks/useDomainSubscriptions';
-import { CheckCircle2, Clock, Award, AlertCircle, FileText, Wrench, ShieldAlert } from 'lucide-react';
+import { CheckCircle2, Clock, Award, AlertCircle, FileText, Wrench, ShieldAlert, Trash2, AlertTriangle } from 'lucide-react';
 import { evaluateAnswer, calculateGradeAndRemark, formatOptionDisplay, evaluateAttempt, resolveAuthoritativeQuestions } from '../lib/scoringEngine';
 import GradingDiagnosticView from './GradingDiagnosticView';
 
@@ -20,6 +20,8 @@ export default function ResultsView({ studentOnly = false }: { studentOnly?: boo
   const [manualMarks, setManualMarks] = useState<Record<number, number>>({});
   const [teacherFeedback, setTeacherFeedback] = useState('');
   const [viewMode, setViewMode] = useState<'records' | 'diagnostics'>('records');
+  const [resultToDelete, setResultToDelete] = useState<any>(null);
+  const [isDeletingResult, setIsDeletingResult] = useState(false);
 
   const isStaff = currentRole === 'teacher' || currentRole === 'admin' || currentRole === 'superadmin';
 
@@ -49,7 +51,8 @@ export default function ResultsView({ studentOnly = false }: { studentOnly?: boo
     let list = data.results;
     if (isStudent) {
       const studentLocal = list.filter(r => r.studentId === currentUser?.id);
-      if (liveStudentResults && liveStudentResults.length > 0) {
+      if (liveStudentResults !== null && liveStudentResults !== undefined) {
+        if (liveStudentResults.length === 0) return [];
         const map = new Map<string, any>();
         studentLocal.forEach(r => map.set(String(r.id), r));
         liveStudentResults.forEach(r => {
@@ -373,6 +376,34 @@ export default function ResultsView({ studentOnly = false }: { studentOnly?: boo
     }
   };
 
+  const handleDeleteResult = async () => {
+    if (!resultToDelete) return;
+    setIsDeletingResult(true);
+    const targetId = String(resultToDelete.id);
+    const student = data.students.find(s => s.id === resultToDelete.studentId);
+    const studentName = student ? student.name : resultToDelete.studentId;
+
+    try {
+      // 1. Update local and shared application store
+      updateData(draft => {
+        draft.results = draft.results.filter(x => String(x.id) !== targetId);
+      });
+
+      // 2. Delete from dedicated Firestore results collection
+      if (schoolId) {
+        await ResultRepository.deleteResult(schoolId, targetId);
+      }
+
+      showToast(`Result for ${studentName} deleted successfully. It has been removed from the student's dashboard.`);
+      setResultToDelete(null);
+    } catch (err: any) {
+      console.warn('Error deleting result:', err);
+      showToast(err.message || 'Failed to delete result');
+    } finally {
+      setIsDeletingResult(false);
+    }
+  };
+
   return (
     <>
       {isStaff && (
@@ -505,6 +536,18 @@ export default function ResultsView({ studentOnly = false }: { studentOnly?: boo
                             >
                               <Wrench className="w-3 h-3 text-indigo-600" />
                               Diagnose
+                            </Button>
+                          )}
+
+                          {isStaff && (
+                            <Button
+                              variant="danger"
+                              onClick={() => setResultToDelete(r)}
+                              className="text-xs py-1 px-2 flex items-center gap-1 bg-rose-50 text-rose-700 border-rose-200 hover:bg-rose-100 hover:border-rose-300"
+                              title="Delete result from student dashboard"
+                            >
+                              <Trash2 className="w-3 h-3 text-rose-600" />
+                              Delete
                             </Button>
                           )}
                         </div>
@@ -664,6 +707,76 @@ export default function ResultsView({ studentOnly = false }: { studentOnly?: boo
           </div>
         )}
       </Modal>
+
+      {/* Delete Result Confirmation Modal */}
+      {resultToDelete && (
+        <Modal
+          isOpen={!!resultToDelete}
+          onClose={() => !isDeletingResult && setResultToDelete(null)}
+        >
+          <div className="space-y-4">
+            <h3 className="text-lg font-bold text-slate-800 m-0">Delete Assessment Result?</h3>
+            <div className="p-4 bg-rose-50 border border-rose-200 rounded-xl flex items-start gap-3">
+              <AlertTriangle className="w-6 h-6 text-rose-600 shrink-0 mt-0.5" />
+              <div className="text-sm text-rose-950">
+                <p className="font-bold mb-1">Permanent Result Removal</p>
+                <p className="text-xs text-rose-900/90 m-0">
+                  Are you sure you want to delete this result for <strong>{data.students.find(s => s.id === resultToDelete.studentId)?.name || resultToDelete.studentId}</strong> in <strong>{resultToDelete.subject}</strong> ({resultToDelete.type})?
+                </p>
+              </div>
+            </div>
+
+            <div className="bg-slate-50 p-3.5 rounded-xl text-xs space-y-1.5 text-slate-700 border border-slate-200">
+              <div className="flex justify-between">
+                <span className="text-slate-500">Recorded Score:</span>
+                <span className="font-bold">{resultToDelete.raw} / {resultToDelete.rawMax} ({resultToDelete.percentage ?? 0}%)</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-500">Grade & Remark:</span>
+                <span className="font-bold">{resultToDelete.grade || '—'} &bull; {resultToDelete.remark || '—'}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-500">Submitted On:</span>
+                <span className="font-bold">{new Date(resultToDelete.submittedAt).toLocaleDateString()}</span>
+              </div>
+              <div className="text-emerald-700 font-medium pt-2 border-t border-slate-200 mt-2 flex items-start gap-1.5">
+                <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-600 mt-0.5" />
+                <span>
+                  This result will be immediately deleted from the student's dashboard. It will free up an attempt for the student if retakes are configured.
+                </span>
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
+              <Button
+                variant="secondary"
+                onClick={() => setResultToDelete(null)}
+                disabled={isDeletingResult}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="danger"
+                onClick={handleDeleteResult}
+                disabled={isDeletingResult}
+                className="flex items-center gap-1.5"
+              >
+                {isDeletingResult ? (
+                  <>
+                    <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    Deleting...
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="w-4 h-4" />
+                    Yes, Delete Result
+                  </>
+                )}
+              </Button>
+            </div>
+          </div>
+        </Modal>
+      )}
     </>
   );
 }
