@@ -269,6 +269,26 @@
         "details": { "type": "string", "description": "Contextual metadata JSON string" }
       },
       "required": ["id", "schoolId", "actorId", "action", "timestamp"]
+    },
+    "LearningResource": {
+      "title": "LearningResource",
+      "description": "Educational resource (documents, PDFs, books, images, diagrams, links) with British read-aloud support",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Resource unique identifier" },
+        "title": { "type": "string", "description": "Title of the learning material" },
+        "description": { "type": "string", "description": "Brief description of the material" },
+        "type": { "type": "string", "description": "Resource format", "enum": ["document", "pdf", "image", "diagram", "book", "link", "notes"] },
+        "subject": { "type": "string", "description": "Associated curriculum subject" },
+        "targetClass": { "type": "string", "description": "Target class or All" },
+        "topic": { "type": "string", "description": "Curriculum topic or unit" },
+        "url": { "type": "string", "description": "External resource URL or file link" },
+        "content": { "type": "string", "description": "Textual content for reading or British English speech synthesis" },
+        "author": { "type": "string", "description": "Teacher or author name" },
+        "readAloudLang": { "type": "string", "description": "Speech synthesis language (en-GB)" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Upload timestamp" }
+      },
+      "required": ["id", "title", "type", "subject"]
     }
   },
   "firestore": {
@@ -335,6 +355,10 @@
     "/schools/{schoolId}/auditLogs/{logId}": {
       "schema": { "$ref": "#/entities/AuditLog" },
       "description": "Immutable security and administrative audit log events"
+    },
+    "/schools/{schoolId}/learningResources/{resourceId}": {
+      "schema": { "$ref": "#/entities/LearningResource" },
+      "description": "Curriculum learning documents, diagrams, books, and study guides with British read-aloud"
     }
   }
 }

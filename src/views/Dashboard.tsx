@@ -24,12 +24,14 @@ import CAReportCardView from './CAReportCardView';
 import GradingDiagnosticView from './GradingDiagnosticView';
 import LearningResourcesManager from './LearningResourcesManager';
 import StudentLearningResources from './StudentLearningResources';
+import LeaderboardView from '../components/LeaderboardView';
 import {
   LayoutDashboard,
   Users,
   GraduationCap,
   BookOpen,
   BookOpenCheck,
+  Trophy,
   Calculator,
   FileQuestion,
   FileSpreadsheet,
@@ -100,6 +102,7 @@ export default function Dashboard() {
             { id: 'Results', label: 'Results', icon: Award },
             { id: 'Grading Diagnostics', label: 'Grading Diagnostics', icon: Wrench, badge: 'Tool', badgeColor: 'bg-indigo-600' },
             { id: 'Learning Resources', label: 'Learning Resources', icon: BookOpenCheck, badge: 'Audio', badgeColor: 'bg-emerald-600' },
+            { id: 'Leaderboard', label: 'Leaderboard & Badges', icon: Trophy, badge: 'XP', badgeColor: 'bg-amber-500' },
             { id: 'Attendance', label: 'Attendance', icon: CalendarCheck }
           ]
         },
@@ -135,6 +138,7 @@ export default function Dashboard() {
             { id: 'CA Score Entry', label: 'CA Score Entry', icon: Calculator },
             { id: 'My Classes', label: 'My Classes', icon: Layers },
             { id: 'Learning Resources', label: 'Learning Resources', icon: BookOpenCheck, badge: 'Audio', badgeColor: 'bg-emerald-600' },
+            { id: 'Leaderboard', label: 'Leaderboard & Badges', icon: Trophy, badge: 'XP', badgeColor: 'bg-amber-500' },
             { id: 'Question Bank', label: 'Question Bank', icon: FileQuestion },
             { id: 'Exams', label: 'Exams', icon: FileSpreadsheet },
             { id: 'Live Exam', label: 'Live Exam', icon: Radio, badge: 'Live', badgeColor: 'bg-rose-500' },
@@ -168,6 +172,7 @@ export default function Dashboard() {
         {
           category: 'Student Portal',
           items: [
+            { id: 'Leaderboard', label: 'Leaderboard & Badges', icon: Trophy, badge: 'XP', badgeColor: 'bg-amber-500' },
             { id: 'My Learning Resources', label: 'My Learning Resources', icon: BookOpenCheck, badge: '🇬🇧 Audio', badgeColor: 'bg-rose-500' },
             { id: 'My Exams', label: 'My Exams', icon: Clock },
             { id: 'My Results', label: 'My Results', icon: Award },
@@ -175,7 +180,7 @@ export default function Dashboard() {
           ]
         }
       ];
-    
+
   const [activeTab, setActiveTab] = useState('Dashboard');
 
   const handleSelectTab = (tabId: string) => {
@@ -185,7 +190,7 @@ export default function Dashboard() {
 
   const renderContent = () => {
     switch (activeTab) {
-      case 'Dashboard': return <DashboardHome />;
+      case 'Dashboard': return <DashboardHome onNavigate={setActiveTab} />;
       case 'Students': return <AdminStudents />;
       case 'Teachers': return <AdminTeachers />;
       case 'Subjects': return currentRole === 'admin' ? <SubjectsList /> : null;
@@ -218,6 +223,7 @@ export default function Dashboard() {
       case 'My Classes': return <MyClassesView />;
       case 'Learning Resources': return currentRole !== 'student' ? <LearningResourcesManager /> : null;
       case 'My Learning Resources': return <StudentLearningResources />;
+      case 'Leaderboard': return <LeaderboardView />;
       default: return null;
     }
   };

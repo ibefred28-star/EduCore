@@ -2,11 +2,14 @@ import { useStore } from '../store';
 import { Card, Input, Label, Select, Button, Modal } from '../components/ui';
 import { Bar } from 'react-chartjs-2';
 import { Chart as ChartJS, CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend } from 'chart.js';
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { useToastStore } from '../store/toast';
 import { isStudentInTeacherClasses } from '../lib/classUtils';
 import { useAnnouncementsSubscription, useStudentResultsSubscription, useLearningResourcesSubscription } from '../hooks/useDomainSubscriptions';
-import { Bell, Megaphone, Info, BookOpen, Volume2, Sparkles } from 'lucide-react';
+import { Bell, Megaphone, Info, BookOpen, Volume2, Sparkles, Trophy, Crown, ArrowRight, Zap, Flame, Award } from 'lucide-react';
+import GamificationHUD from '../components/GamificationHUD';
+import LeaderboardView from '../components/LeaderboardView';
+import { calculateStudentTotalXP, getStudentLevel } from '../lib/gamification';
 
 ChartJS.register(CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend);
 
@@ -17,8 +20,12 @@ function getComponentMax(type: string, config: any) {
   return null;
 }
 
-export default function DashboardHome() {
-  const { data, currentRole, currentUser, config, schoolId } = useStore();
+interface DashboardHomeProps {
+  onNavigate?: (tab: string) => void;
+}
+
+export default function DashboardHome({ onNavigate }: DashboardHomeProps = {}) {
+  const { data, currentRole, currentUser, config, schoolId, updateData } = useStore();
   
   // Real-time school announcements listener
   const roleForAnnouncements = currentRole === 'student' ? 'student' : currentRole === 'teacher' ? 'teacher' : 'admin';
@@ -72,6 +79,23 @@ export default function DashboardHome() {
     return (data.results || []).filter(r => r.studentId === currentUser?.id);
   }, [liveStudentResults, data.results, currentUser?.id]);
 
+  // Prune any results locally that were deleted by a teacher in Firestore
+  useEffect(() => {
+    if (currentRole === 'student' && currentUser?.id && liveStudentResults !== null && liveStudentResults !== undefined) {
+      const liveIds = new Set(liveStudentResults.map(r => String(r.id)));
+      const hasOrphanLocal = data.results.some(
+        r => r.studentId === currentUser.id && !liveIds.has(String(r.id))
+      );
+      if (hasOrphanLocal) {
+        updateData(draft => {
+          draft.results = draft.results.filter(
+            r => r.studentId !== currentUser.id || liveIds.has(String(r.id))
+          );
+        });
+      }
+    }
+  }, [currentRole, currentUser?.id, liveStudentResults, data.results, updateData]);
+
   // Filter results: if student, only theirs. if teacher, only students in their classes.
   const results = currentRole === 'student' 
     ? effectiveStudentResults
@@ -98,6 +122,8 @@ export default function DashboardHome() {
         return true;
       }).length
     : data.exams.length;
+
+  const [showLeaderboardModal, setShowLeaderboardModal] = useState(false);
 
   const chartData = {
     labels: data.subjects.length > 0 ? data.subjects : ['None'],
@@ -145,6 +171,9 @@ export default function DashboardHome() {
         </div>
       </div>
 
+      {/* Gamification HUD for Students (Level, Streaks, Daily Quests, Badges) */}
+      {currentRole === 'student' && <GamificationHUD />}
+
       {/* Stats Widgets */}
       {currentRole !== 'student' && (
         <div className="bg-white rounded-[24px] p-6 shadow-sm flex flex-col justify-center border border-slate-100">
@@ -162,8 +191,11 @@ export default function DashboardHome() {
         </div>
       )}
 
-      <div className="bg-indigo-50 rounded-[24px] p-6 shadow-sm flex flex-col justify-center text-indigo-900 border border-indigo-100">
-        <span className="font-medium mb-1 opacity-80">Available Exams</span>
+      <div 
+        onClick={() => onNavigate?.(currentRole === 'student' ? 'My Exams' : 'Exams')}
+        className="bg-indigo-50 hover:bg-indigo-100/80 rounded-[24px] p-6 shadow-sm flex flex-col justify-center text-indigo-900 border border-indigo-100 transition-all cursor-pointer group"
+      >
+        <span className="font-medium mb-1 opacity-80 group-hover:opacity-100 transition-opacity">Available Exams</span>
         <h2 className="text-4xl font-extrabold m-0">
           {currentRole === 'student' ? studentActiveExamsCount : data.exams.length}
         </h2>
@@ -192,36 +224,59 @@ export default function DashboardHome() {
 
       {currentRole === 'student' && (
         <div className="col-span-1 md:col-span-3 lg:col-span-2 row-span-2 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-[24px] p-6 shadow-sm text-white overflow-hidden relative">
-          <h3 className="text-lg font-bold m-0 mb-4 flex items-center gap-2">
-            <span>🏆</span> XP Leaderboard
-          </h3>
-          <div className="flex flex-col gap-3 relative z-10">
+          <div className="flex justify-between items-center mb-4">
+            <div>
+              <h3 className="text-lg font-bold m-0 flex items-center gap-2">
+                <span>🏆</span> XP Leaderboard
+              </h3>
+              <span className="text-[10px] text-indigo-100 font-mono">
+                ⚡ 2 XP per correct answer
+              </span>
+            </div>
+            <button
+              onClick={() => setShowLeaderboardModal(true)}
+              className="text-xs bg-white/20 hover:bg-white/30 px-3 py-1.5 rounded-xl text-white font-bold flex items-center gap-1 transition-all cursor-pointer shadow-sm"
+            >
+              <span>Full Podium</span>
+              <ArrowRight className="w-3.5 h-3.5" />
+            </button>
+          </div>
+          <div className="flex flex-col gap-2.5 relative z-10">
             {data.students
               .map(s => {
                 const sResults = s.id === currentUser?.id && currentRole === 'student' && liveStudentResults !== null && liveStudentResults !== undefined
                   ? liveStudentResults
                   : data.results.filter(r => r.studentId === s.id);
-                const xp = sResults.reduce((sum, r) => sum + (r.scaled || r.raw || 0), 0);
-                return { ...s, xp };
+                const xpStats = calculateStudentTotalXP(s.id, sResults);
+                const levelInfo = getStudentLevel(xpStats.totalXP);
+                return { ...s, xp: xpStats.totalXP, levelInfo, correctAnswers: xpStats.correctAnswersCount };
               })
               .sort((a, b) => b.xp - a.xp)
               .slice(0, 5)
               .map((s, idx) => (
-                <div key={s.id} className={`flex items-center justify-between p-3 rounded-xl ${s.id === currentUser?.id ? 'bg-white/20 font-bold border border-white/30' : 'bg-black/10'}`}>
-                  <div className="flex items-center gap-3">
-                    <span className="text-lg font-black w-6 text-center opacity-80">#{idx + 1}</span>
+                <div key={s.id} className={`flex items-center justify-between p-2.5 rounded-xl transition-all ${s.id === currentUser?.id ? 'bg-white/25 font-bold border border-white/40 shadow-sm' : 'bg-black/10'}`}>
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <span className="text-base font-black w-6 text-center opacity-90 flex-shrink-0">
+                      {idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : `#${idx + 1}`}
+                    </span>
                     {s.photo ? (
-                      <img src={s.photo} alt={s.name} className="w-8 h-8 rounded-full object-cover bg-white/20" />
+                      <img src={s.photo} alt={s.name} className="w-8 h-8 rounded-full object-cover bg-white/20 flex-shrink-0" />
                     ) : (
-                      <div className="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center text-sm font-bold">
+                      <div className="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center text-xs font-bold flex-shrink-0">
                         {s.name.charAt(0)}
                       </div>
                     )}
-                    <span className="truncate max-w-[120px]">{s.name.split(' ')[0]}</span>
+                    <div className="min-w-0">
+                      <span className="truncate max-w-[120px] block leading-tight text-xs font-bold">{s.name.split(' ')[0]}</span>
+                      <span className="text-[10px] opacity-75 font-normal block truncate">{s.levelInfo.badge} Lvl {s.levelInfo.level}</span>
+                    </div>
                   </div>
-                  <div className="flex items-center gap-1 font-mono">
-                    <span className="text-amber-300">⚡</span>
-                    {Math.round(s.xp)} XP
+                  <div className="text-right flex-shrink-0">
+                    <div className="flex items-center gap-1 font-mono justify-end text-xs font-bold">
+                      <span className="text-amber-300">⚡</span>
+                      {Math.round(s.xp)} XP
+                    </div>
+                    <span className="text-[10px] opacity-75 font-mono">{s.correctAnswers} correct</span>
                   </div>
                 </div>
               ))}
@@ -231,33 +286,51 @@ export default function DashboardHome() {
       )}
 
       {/* Learning Resources Widget */}
-      <div className="bg-gradient-to-br from-indigo-900 to-slate-900 rounded-[24px] p-6 shadow-sm flex flex-col justify-between text-white border border-indigo-800/40 relative overflow-hidden">
+      <div 
+        onClick={() => onNavigate?.(currentRole === 'student' ? 'My Learning Resources' : 'Learning Resources')}
+        className="bg-gradient-to-br from-indigo-900 to-slate-900 hover:from-indigo-800 hover:to-slate-800 rounded-[24px] p-6 shadow-sm flex flex-col justify-between text-white border border-indigo-800/40 relative overflow-hidden transition-all cursor-pointer group"
+      >
         <div>
           <div className="flex items-center gap-1.5 text-xs text-rose-400 font-bold uppercase tracking-wider mb-1">
             <span>🇬🇧</span>
             <span>British Audio Ready</span>
           </div>
-          <span className="text-slate-300 font-medium text-sm">Learning Resources</span>
+          <span className="text-slate-300 font-medium text-sm group-hover:text-white transition-colors">Learning Resources</span>
           <h2 className="text-4xl font-extrabold m-0 text-white mt-1">{studentResourcesCount}</h2>
         </div>
-        <p className="text-[11px] text-slate-400 m-0 mt-3">
-          {currentRole === 'student' ? 'Textbooks & diagrams for your class' : 'Available for all classes'}
+        <p className="text-[11px] text-slate-400 group-hover:text-slate-300 m-0 mt-3 transition-colors flex items-center gap-1">
+          <span>{currentRole === 'student' ? 'Open & listen to resources' : 'Manage learning resources'}</span>
+          <ArrowRight className="w-3 h-3 group-hover:translate-x-1 transition-transform" />
         </p>
-        <div className="absolute right-2 bottom-2 opacity-10">
+        <div className="absolute right-2 bottom-2 opacity-10 group-hover:opacity-20 transition-opacity">
           <BookOpen className="w-24 h-24 text-white" />
         </div>
       </div>
 
       {/* Additional Stats */}
-      <div className="bg-emerald-500 rounded-[24px] p-6 shadow-sm flex flex-col justify-center text-white">
-        <span className="text-emerald-100 font-medium mb-1">Recorded Results</span>
+      <div 
+        onClick={() => onNavigate?.(currentRole === 'student' ? 'My Results' : 'Results')}
+        className="bg-emerald-500 hover:bg-emerald-600 rounded-[24px] p-6 shadow-sm flex flex-col justify-center text-white transition-all cursor-pointer group"
+      >
+        <span className="text-emerald-100 font-medium mb-1 group-hover:text-white transition-colors">Recorded Results</span>
         <h2 className="text-4xl font-extrabold m-0">{results.length}</h2>
       </div>
 
-      <div className="bg-amber-100 rounded-[24px] p-6 shadow-sm flex flex-col justify-center text-amber-900 border border-amber-200">
+      <div 
+        onClick={() => currentRole === 'admin' && onNavigate?.('Subjects')}
+        className={`bg-amber-100 rounded-[24px] p-6 shadow-sm flex flex-col justify-center text-amber-900 border border-amber-200 ${currentRole === 'admin' ? 'hover:bg-amber-200/80 cursor-pointer transition-all' : ''}`}
+      >
         <span className="font-medium mb-1 opacity-80">Active Subjects</span>
         <h2 className="text-4xl font-extrabold m-0">{data.subjects.length}</h2>
       </div>
+
+      {/* Full Gamified Leaderboard Modal */}
+      {showLeaderboardModal && (
+        <LeaderboardView
+          isModal={true}
+          onClose={() => setShowLeaderboardModal(false)}
+        />
+      )}
     </div>
   );
 }
