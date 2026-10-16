@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { useStore } from '../store';
 import { useToastStore } from '../store/toast';
 import { Button, Card, SkeletonCard } from '../components/ui';
@@ -7,7 +7,7 @@ import { useExamsSubscription, useStudentResultsSubscription } from '../hooks/us
 import { CheckCircle2, Clock, BookOpen, AlertCircle } from 'lucide-react';
 
 export default function MyExams() {
-  const { data, currentUser, schoolId } = useStore();
+  const { data, currentUser, schoolId, updateData } = useStore();
   const showToast = useToastStore(s => s.showToast);
 
   const studentClass = currentUser ? (currentUser as Student).class : '';
@@ -24,6 +24,23 @@ export default function MyExams() {
     }
     return (data.results || []).filter(r => r.studentId === currentUser?.id);
   }, [liveResults, data.results, currentUser?.id]);
+
+  // Prune deleted results from local store if teacher deleted them in Firestore
+  useEffect(() => {
+    if (currentUser?.id && liveResults !== null && liveResults !== undefined) {
+      const liveIds = new Set(liveResults.map(r => String(r.id)));
+      const hasOrphan = data.results.some(
+        r => r.studentId === currentUser.id && !liveIds.has(String(r.id))
+      );
+      if (hasOrphan) {
+        updateData(draft => {
+          draft.results = draft.results.filter(
+            r => r.studentId !== currentUser.id || liveIds.has(String(r.id))
+          );
+        });
+      }
+    }
+  }, [currentUser?.id, liveResults, data.results, updateData]);
 
   // Merge local and live exams by ID to ensure all created active exams are displayed
   const effectiveExams = useMemo(() => {

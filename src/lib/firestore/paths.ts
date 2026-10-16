@@ -66,6 +66,10 @@ export const FirestorePaths = {
   assessments: (schoolId: string) => `schools/${cleanId(schoolId)}/assessments`,
   assessmentDoc: (schoolId: string, assessmentId: string) => `schools/${cleanId(schoolId)}/assessments/${cleanId(assessmentId)}`,
 
+  // Learning Resources (Documents, Diagrams, Books, Links, Notes)
+  learningResources: (schoolId: string) => `schools/${cleanId(schoolId)}/learningResources`,
+  learningResource: (schoolId: string, resourceId: string) => `schools/${cleanId(schoolId)}/learningResources/${cleanId(resourceId)}`,
+
   // Immutable Audit Log Trail
   auditLogs: (schoolId: string) => `schools/${cleanId(schoolId)}/auditLogs`,
   auditLog: (schoolId: string, logId: string) => `schools/${cleanId(schoolId)}/auditLogs/${cleanId(logId)}`

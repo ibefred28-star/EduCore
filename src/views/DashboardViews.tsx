@@ -2,11 +2,11 @@ import { useStore } from '../store';
 import { Card, Input, Label, Select, Button, Modal } from '../components/ui';
 import { Bar } from 'react-chartjs-2';
 import { Chart as ChartJS, CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend } from 'chart.js';
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { useToastStore } from '../store/toast';
 import { isStudentInTeacherClasses } from '../lib/classUtils';
-import { useAnnouncementsSubscription } from '../hooks/useDomainSubscriptions';
-import { Bell, Megaphone, Info } from 'lucide-react';
+import { useAnnouncementsSubscription, useStudentResultsSubscription, useLearningResourcesSubscription } from '../hooks/useDomainSubscriptions';
+import { Bell, Megaphone, Info, BookOpen, Volume2, Sparkles } from 'lucide-react';
 
 ChartJS.register(CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend);
 
@@ -34,9 +34,47 @@ export default function DashboardHome() {
     ? data.students.filter(s => isStudentInTeacherClasses(s.class, teacherClasses))
     : data.students;
 
+  const studentClass = currentUser && currentRole === 'student' ? (currentUser as any).class : '';
+
+  // Real-time student results subscription (reflects teacher result deletions instantaneously)
+  const { results: liveStudentResults } = useStudentResultsSubscription(
+    schoolId,
+    currentRole === 'student' ? currentUser?.id : null
+  );
+
+  // Real-time learning resources subscription
+  const { resources: liveLearningResources } = useLearningResourcesSubscription(
+    schoolId,
+    studentClass
+  );
+
+  // Available learning resources count for current student or school
+  const studentResourcesCount = useMemo(() => {
+    const list = liveLearningResources && liveLearningResources.length > 0
+      ? liveLearningResources
+      : data.learningResources || [];
+    if (currentRole === 'student' && studentClass) {
+      const studentNorm = studentClass.trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+      return list.filter(r => {
+        if (!r.targetClass || r.targetClass === 'All' || r.targetClass.toLowerCase() === 'all') return true;
+        const targetNorm = r.targetClass.trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+        return targetNorm === studentNorm || studentNorm.includes(targetNorm) || targetNorm.includes(studentNorm);
+      }).length;
+    }
+    return list.length;
+  }, [liveLearningResources, data.learningResources, currentRole, studentClass]);
+
+  // Reconciled student results (if teacher deleted a result, liveStudentResults won't have it!)
+  const effectiveStudentResults = useMemo(() => {
+    if (liveStudentResults !== null && liveStudentResults !== undefined) {
+      return liveStudentResults;
+    }
+    return (data.results || []).filter(r => r.studentId === currentUser?.id);
+  }, [liveStudentResults, data.results, currentUser?.id]);
+
   // Filter results: if student, only theirs. if teacher, only students in their classes.
   const results = currentRole === 'student' 
-    ? data.results.filter(r => r.studentId === currentUser?.id)
+    ? effectiveStudentResults
     : currentRole === 'teacher'
     ? data.results.filter(r => {
         const student = data.students.find(s => s.id === r.studentId);
@@ -45,7 +83,6 @@ export default function DashboardHome() {
     : data.results;
 
   // Compute student-specific active exams matching MyExams logic
-  const studentClass = currentUser && currentRole === 'student' ? (currentUser as any).class : '';
   const studentActiveExamsCount = currentRole === 'student'
     ? data.exams.filter(e => {
         const status = String(e.status || '').trim().toLowerCase();
@@ -161,9 +198,10 @@ export default function DashboardHome() {
           <div className="flex flex-col gap-3 relative z-10">
             {data.students
               .map(s => {
-                const xp = data.results
-                  .filter(r => r.studentId === s.id)
-                  .reduce((sum, r) => sum + (r.scaled || r.raw || 0), 0);
+                const sResults = s.id === currentUser?.id && currentRole === 'student' && liveStudentResults !== null && liveStudentResults !== undefined
+                  ? liveStudentResults
+                  : data.results.filter(r => r.studentId === s.id);
+                const xp = sResults.reduce((sum, r) => sum + (r.scaled || r.raw || 0), 0);
                 return { ...s, xp };
               })
               .sort((a, b) => b.xp - a.xp)
@@ -191,6 +229,24 @@ export default function DashboardHome() {
           <div className="absolute -right-10 -bottom-10 opacity-10 text-9xl">👑</div>
         </div>
       )}
+
+      {/* Learning Resources Widget */}
+      <div className="bg-gradient-to-br from-indigo-900 to-slate-900 rounded-[24px] p-6 shadow-sm flex flex-col justify-between text-white border border-indigo-800/40 relative overflow-hidden">
+        <div>
+          <div className="flex items-center gap-1.5 text-xs text-rose-400 font-bold uppercase tracking-wider mb-1">
+            <span>🇬🇧</span>
+            <span>British Audio Ready</span>
+          </div>
+          <span className="text-slate-300 font-medium text-sm">Learning Resources</span>
+          <h2 className="text-4xl font-extrabold m-0 text-white mt-1">{studentResourcesCount}</h2>
+        </div>
+        <p className="text-[11px] text-slate-400 m-0 mt-3">
+          {currentRole === 'student' ? 'Textbooks & diagrams for your class' : 'Available for all classes'}
+        </p>
+        <div className="absolute right-2 bottom-2 opacity-10">
+          <BookOpen className="w-24 h-24 text-white" />
+        </div>
+      </div>
 
       {/* Additional Stats */}
       <div className="bg-emerald-500 rounded-[24px] p-6 shadow-sm flex flex-col justify-center text-white">

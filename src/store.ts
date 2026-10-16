@@ -23,6 +23,7 @@ function sanitizeState(incoming: AppData, fallback: AppData = EMPTY_SCHOOL_DATA)
   if (!Array.isArray(copy.admins)) copy.admins = [];
   if (!Array.isArray(copy.subjects)) copy.subjects = fallback.subjects || ['Mathematics', 'English Language', 'Basic Science & Technology'];
   if (!Array.isArray(copy.assessments)) copy.assessments = fallback.assessments || [];
+  if (!Array.isArray(copy.learningResources)) copy.learningResources = fallback.learningResources || [];
 
   return copy;
 }

@@ -53,12 +53,12 @@ export default function ResultsView({ studentOnly = false }: { studentOnly?: boo
       const studentLocal = list.filter(r => r.studentId === currentUser?.id);
       if (liveStudentResults !== null && liveStudentResults !== undefined) {
         if (liveStudentResults.length === 0) return [];
-        const map = new Map<string, any>();
-        studentLocal.forEach(r => map.set(String(r.id), r));
-        liveStudentResults.forEach(r => {
-          const existing = map.get(String(r.id));
+        // Authoritative: Only include results that exist in liveStudentResults.
+        // If a teacher deleted a result, it is removed from Firestore and will not appear here.
+        return liveStudentResults.map(r => {
+          const existing = studentLocal.find(sl => String(sl.id) === String(r.id));
           if (existing && existing.raw > 0 && (!r.raw || r.raw === 0)) {
-            map.set(String(r.id), {
+            return {
               ...r,
               raw: existing.raw,
               rawMax: existing.rawMax,
@@ -66,12 +66,10 @@ export default function ResultsView({ studentOnly = false }: { studentOnly?: boo
               grade: existing.grade,
               remark: existing.remark,
               breakdown: existing.breakdown || r.breakdown
-            });
-          } else {
-            map.set(String(r.id), r);
+            };
           }
+          return r;
         });
-        return Array.from(map.values());
       }
       return studentLocal;
     } else if (currentRole === 'teacher') {
@@ -82,6 +80,23 @@ export default function ResultsView({ studentOnly = false }: { studentOnly?: boo
     }
     return list;
   }, [data.results, isStudent, liveStudentResults, currentUser?.id, currentRole, data.students, teacherClasses]);
+
+  // Prune any results locally that were deleted by a teacher in Firestore
+  useEffect(() => {
+    if (isStudent && currentUser?.id && liveStudentResults !== null && liveStudentResults !== undefined) {
+      const liveIds = new Set(liveStudentResults.map(r => String(r.id)));
+      const hasOrphanLocal = data.results.some(
+        r => r.studentId === currentUser.id && !liveIds.has(String(r.id))
+      );
+      if (hasOrphanLocal) {
+        updateData(draft => {
+          draft.results = draft.results.filter(
+            r => r.studentId !== currentUser.id || liveIds.has(String(r.id))
+          );
+        });
+      }
+    }
+  }, [isStudent, currentUser?.id, liveStudentResults, data.results, updateData]);
 
   // Auto-reconcile results that have answers but raw score is 0 due to sanitized keys at submit time
   useEffect(() => {

@@ -12,6 +12,7 @@ import {
   FirestoreQuestionBankDoc
 } from '../lib/firestore/models';
 import { QuestionBankRepository } from '../lib/firestore/repositories/questionBankRepository';
+import { LearningResource } from '../types';
 import {
   useFirestoreSubscription,
   useFirestoreQueryData,
@@ -227,4 +228,39 @@ export function useQuestionBankSubscription(
 
   return { questions: questions || [], loading, error };
 }
+
+/**
+ * Live subscription hook for learning resources (documents, diagrams, books, links, notes)
+ */
+export function useLearningResourcesSubscription(
+  schoolId: string | null | undefined,
+  classFilter?: string,
+  options?: UseFirestoreSubscriptionOptions
+) {
+  const q = useMemo(() => {
+    if (!schoolId) return null;
+    const colRef = collection(db, FirestorePaths.learningResources(schoolId));
+    return query(colRef, orderBy('createdAt', 'desc'));
+  }, [schoolId]);
+
+  const { data: rawResources, loading, error } = useFirestoreQueryData<LearningResource>(q, {
+    enabled: !!schoolId,
+    ...options
+  });
+
+  const resources = useMemo(() => {
+    if (!rawResources) return [];
+    if (!classFilter || classFilter.toLowerCase() === 'all') return rawResources;
+
+    const classNorm = classFilter.trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+    return rawResources.filter(r => {
+      if (!r.targetClass || r.targetClass === 'All' || r.targetClass.toLowerCase() === 'all') return true;
+      const targetNorm = r.targetClass.trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+      return targetNorm === classNorm || classNorm.includes(targetNorm) || targetNorm.includes(classNorm);
+    });
+  }, [rawResources, classFilter]);
+
+  return { resources, loading, error };
+}
+
 

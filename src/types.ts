@@ -174,6 +174,30 @@ export interface AssessmentRecord {
   updatedAt?: string;
 }
 
+export type LearningResourceType = 'document' | 'pdf' | 'image' | 'diagram' | 'book' | 'link' | 'notes';
+
+export interface LearningResource {
+  id: string;
+  title: string;
+  description?: string;
+  type: LearningResourceType;
+  subject: string;
+  targetClass: string; // 'All' or specific class e.g. 'JSS 1', 'SS 2'
+  topic?: string;
+  tags?: string[];
+  content?: string; // Text content, chapter text, transcript, study guide notes - used for Read Aloud
+  linkUrl?: string; // For web links / external references
+  fileUrl?: string; // Base64 data URL or external URL for images/diagrams/PDFs/books
+  fileName?: string;
+  fileSize?: number;
+  mimeType?: string;
+  createdBy: string;
+  teacherId?: string;
+  teacherName?: string;
+  createdAt: string;
+  updatedAt?: string;
+}
+
 export interface AppData {
   students: Student[];
   teachers: Teacher[];
@@ -184,6 +208,7 @@ export interface AppData {
   attendance: Attendance[];
   questions: BankQuestion[];
   assessments?: AssessmentRecord[];
+  learningResources?: LearningResource[];
 }
 
 export interface Branding {

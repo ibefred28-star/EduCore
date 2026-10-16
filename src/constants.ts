@@ -36,10 +36,154 @@ export const EMPTY_SCHOOL_DATA: AppData = {
   results: [],
   attendance: [],
   questions: [],
-  assessments: []
+  assessments: [],
+  learningResources: []
 };
 
+export const DEFAULT_LEARNING_RESOURCES = [
+  {
+    id: 'res-heart-circulatory',
+    title: 'The Anatomy of the Human Heart and Circulatory System',
+    description: 'Comprehensive diagram and physiological breakdown of systemic and pulmonary circulation.',
+    type: 'diagram' as const,
+    subject: 'Basic Science',
+    targetClass: 'All',
+    topic: 'Human Anatomy & Physiology',
+    tags: ['Biology', 'Circulation', 'Heart', 'Organ Systems'],
+    content: `The human circulatory system is an intricate biological network responsible for transporting oxygen, nutrients, hormones, and cellular waste products throughout the body.
+
+At the centre of this remarkable system sits the heart, a muscular double pump operating continuously throughout an individual's lifetime. The heart is divided into four distinct chambers: the right atrium, the right ventricle, the left atrium, and the left ventricle.
+
+Deoxygenated blood returns from the body tissues via the superior and inferior vena cava into the right atrium. It then passes through the tricuspid valve into the right ventricle, which pumps it through the pulmonary artery directly to the lungs for gaseous exchange.
+
+Inside the lungs, red blood cells release carbon dioxide and bind with fresh oxygen. This revitalised, oxygenated blood returns via the pulmonary veins into the left atrium. It travels through the bicuspid mitral valve into the powerful left ventricle, whose thick muscular wall propels the blood under high pressure through the aorta into systemic circulation.
+
+Key points to remember for your examinations:
+First, arteries carry blood away from the heart, typically high in oxygen, with the sole exception of the pulmonary artery.
+Second, veins carry blood towards the heart, generally lower in oxygen, with the exception of the pulmonary veins.
+Third, microscopic capillaries allow direct exchange of oxygen and nutrients with individual body cells.`,
+    fileUrl: 'https://images.unsplash.com/photo-1530026405186-ed1f139313f8?auto=format&fit=crop&w=1200&q=80',
+    fileName: 'heart_anatomy_diagram.png',
+    fileSize: 425000,
+    mimeType: 'image/png',
+    createdBy: 'Mr. Okafor',
+    teacherId: 'teacher1',
+    teacherName: 'Mr. Okafor',
+    createdAt: '2026-10-10T08:30:00.000Z'
+  },
+  {
+    id: 'res-photosynthesis-guide',
+    title: 'Photosynthesis & Plant Respiration Master Study Guide',
+    description: 'Detailed study text examining chloroplast structures, light reactions, and the Calvin cycle.',
+    type: 'document' as const,
+    subject: 'Basic Science',
+    targetClass: 'Primary 5',
+    topic: 'Plant Biology & Energy',
+    tags: ['Photosynthesis', 'Botany', 'Biochemistry'],
+    content: `Photosynthesis is the fundamental biochemical process by which green plants, algae, and photosynthetic bacteria convert light energy into stable chemical energy stored in glucose molecules.
+
+In terrestrial vascular plants, this miraculous chemical synthesis occurs primarily within the palisade mesophyll cells of green leaves. Within these cells are specialized microscopic organelles known as chloroplasts.
+
+Chloroplasts contain disc-like structures called thylakoids, stacked neatly into granum columns. The green photosynthetic pigment chlorophyll is embedded within these thylakoid membranes. Chlorophyll absorbs solar radiation, specifically photons in the blue and red bands of the visible light spectrum, while reflecting green light, which accounts for the distinctive coloration of foliage.
+
+The overall chemical equation for photosynthesis is summarized as follows:
+Six molecules of carbon dioxide react with six molecules of water, powered by sunlight absorbed by chlorophyll, to produce one molecule of glucose and six molecules of breathable oxygen gas.
+
+Plants utilize the resulting glucose for immediate energy via cellular respiration, or polymerize it into starch for long-term botanical storage. The byproduct oxygen is released through tiny leaf pores called stomata, sustaining aerobic respiration for all terrestrial and marine life.`,
+    fileName: 'photosynthesis_master_guide.pdf',
+    fileSize: 312000,
+    mimeType: 'application/pdf',
+    createdBy: 'Mr. Okafor',
+    teacherId: 'teacher1',
+    teacherName: 'Mr. Okafor',
+    createdAt: '2026-10-11T09:15:00.000Z'
+  },
+  {
+    id: 'res-algebra-foundations',
+    title: 'Algebraic Foundations: Linear Equations and Balancing Principles',
+    description: 'Essential textbook chapter covering one-variable equations, inverse operations, and problem solving.',
+    type: 'book' as const,
+    subject: 'Math',
+    targetClass: 'Primary 5',
+    topic: 'Algebra & Linear Equations',
+    tags: ['Mathematics', 'Algebra', 'Linear Equations'],
+    content: `Welcome to Chapter Four: The Golden Principles of Algebraic Manipulation.
+
+In mathematics, an equation represents a statement of exact numerical equality between two expressions. You can visualize an algebraic equation as a classical mechanical balance scale. When both pans hold equal weights, the scale rests in perfect horizontal equilibrium.
+
+The Golden Rule of Algebra states:
+Whatever mathematical operation you apply to one side of an equation, you must perform identically to the opposing side in order to preserve balance.
+
+Let us examine a practical example:
+Solve for x in the equation: Three x plus seven equals twenty-two.
+
+Step One: Eliminate the constant term added to x by applying inverse operations. We subtract seven from both sides of the equation.
+Three x plus seven minus seven equals twenty-two minus seven.
+This simplifies cleanly to: Three x equals fifteen.
+
+Step Two: Isolate the unknown variable x by dividing both sides by the coefficient three.
+Three x divided by three equals fifteen divided by three.
+Hence, x equals five.
+
+Step Three: Verify your conclusion through substitution.
+Three multiplied by five is fifteen. Adding seven gives twenty-two. The equality holds true, confirming our solution is correct.`,
+    fileName: 'algebra_chapter_4.pdf',
+    fileSize: 580000,
+    mimeType: 'application/pdf',
+    createdBy: 'Mr. Okafor',
+    teacherId: 'teacher1',
+    teacherName: 'Mr. Okafor',
+    createdAt: '2026-10-12T11:00:00.000Z'
+  },
+  {
+    id: 'res-benin-kingdom-history',
+    title: 'Heritage & Governance of the Ancient Benin Kingdom',
+    description: 'Historical overview of pre-colonial West African civilization, Oba leadership, and brass casting guilds.',
+    type: 'notes' as const,
+    subject: 'Nigerian History',
+    targetClass: 'Primary 5',
+    topic: 'Pre-Colonial Kingdoms',
+    tags: ['History', 'Benin Kingdom', 'Culture', 'Nigeria'],
+    content: `The ancient Kingdom of Benin, situated in present-day southern Nigeria, stands as one of the most sophisticated, prosperous, and culturally advanced civilisations of pre-colonial Africa.
+
+Founded around the eleventh century, the kingdom transitioned from the reign of the Ogiso rulers to the dynasty of the Oba, established by Prince Oranmiyan of Ife. The Oba was revered not merely as a political sovereign, but as a spiritual custodian of the Edo people.
+
+Under visionary rulers such as Oba Ewuare the Great in the fifteenth century, Benin underwent dramatic urban expansion. The kingdom constructed the renowned Benin Moat, a massive network of earthen ramparts and defensive trenches that historians consider one of the largest earth-moving feats in pre-industrial civilization.
+
+Artistically, the royal court established specialised hereditary craft guilds. Master artisans created magnificent bronze, brass, and terracotta sculptures through the lost-wax casting technique. These historic works, known globally as the Benin Bronzes, documented royal ceremonies, warfare, international trade with Portuguese merchants, and diplomatic treaties with astonishing visual elegance.`,
+    createdBy: 'Mr. Okafor',
+    teacherId: 'teacher1',
+    teacherName: 'Mr. Okafor',
+    createdAt: '2026-10-13T14:20:00.000Z'
+  },
+  {
+    id: 'res-british-council-english',
+    title: 'British Council English Grammar & Pronunciation Portal',
+    description: 'Interactive portal with British English grammar modules, formal pronunciation, and listening exercises.',
+    type: 'link' as const,
+    subject: 'English',
+    targetClass: 'All',
+    topic: 'Grammar & Spoken English',
+    tags: ['English Language', 'Grammar', 'Phonics', 'British Council'],
+    linkUrl: 'https://learnenglish.britishcouncil.org/grammar',
+    content: `The British Council Grammar portal provides structured lessons on formal British English syntax, phonetics, and standard grammatical rules.
+
+Key topics covered include:
+First: Distinguishing between active and passive voice in formal written prose.
+Second: Mastering conditional clauses and subjunctive constructions.
+Third: British English spelling standards, such as honour, colour, and centre, alongside Received Pronunciation vowel sounds.
+Fourth: Modal auxiliary verbs used for expressing obligation, permission, and polite requests.
+
+Pupils are encouraged to practice reading every lesson aloud in crisp British English to enhance spoken diction, public speaking fluency, and comprehension.`,
+    createdBy: 'Mr. Okafor',
+    teacherId: 'teacher1',
+    teacherName: 'Mr. Okafor',
+    createdAt: '2026-10-14T10:00:00.000Z'
+  }
+];
+
 export const DEFAULT_DATA: AppData = {
+  learningResources: DEFAULT_LEARNING_RESOURCES,
   students: [
     { id: 'STU001', name: 'Aisha Bello', class: 'Primary 5', password: 'pass', photo: '' },
     { id: 'STU002', name: 'Chukwudi Eze', class: 'Primary 5', password: 'pass', photo: '' },
