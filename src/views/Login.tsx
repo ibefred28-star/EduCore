@@ -18,6 +18,7 @@ import {
 
 const LANDING_BG = '/landing-bg.jpg';
 const FALLBACK_BG = 'https://gdb.voanews.com/6a3bfbea-3f94-4849-a377-c2cbfe59d61a_w1080_h608_s.jpg';
+const LOGIN_PAGE_BG = 'https://s3.amazonaws.com/prod-hmhco-vmg-craftcms-public/_transforms/_large/WF1995913_Shaped_2024_Classcraft-blog_batch2_19.jpg';
 
 export default function Login() {
   const { branding, login, schoolId, setSchoolId, loginSuperAdmin, globalTenants } = useStore();
@@ -456,24 +457,35 @@ export default function Login() {
   // VIEW 3: INSTITUTION-BRANDED LOGIN PAGE (Preserves School's Identity)
   // ===========================================================================
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-800 flex flex-col justify-between font-sans selection:bg-indigo-600 selection:text-white p-4">
+    <div className="min-h-screen relative flex flex-col justify-between font-sans selection:bg-indigo-600 selection:text-white p-4 overflow-hidden">
+      {/* Background Image */}
+      <div
+        className="fixed inset-0 bg-cover bg-center z-0 transition-opacity duration-300"
+        style={{
+          backgroundImage: `url('${LOGIN_PAGE_BG}')`,
+          backgroundPosition: 'center'
+        }}
+      />
+      {/* Subtle overlay to preserve clean contrast while showcasing the background */}
+      <div className="fixed inset-0 bg-slate-950/40 backdrop-blur-[1px] z-0 pointer-events-none" />
+
       {/* Top Header with "Change School" Navigation */}
-      <header className="w-full max-w-md mx-auto pt-4 flex items-center justify-between">
+      <header className="relative z-10 w-full max-w-md mx-auto pt-4 flex items-center justify-between">
         <button
           onClick={handleBackToLanding}
-          className="inline-flex items-center gap-1.5 text-xs text-slate-500 hover:text-slate-900 transition-colors font-medium cursor-pointer"
+          className="inline-flex items-center gap-1.5 text-xs text-white/90 hover:text-white bg-slate-900/60 hover:bg-slate-900/80 backdrop-blur-md px-3 py-1.5 rounded-xl border border-white/20 transition-all font-medium cursor-pointer shadow-sm"
         >
           <ArrowLeft className="w-3.5 h-3.5" />
           <span>Change School</span>
         </button>
-        <span className="text-[11px] font-mono text-slate-400">
+        <span className="text-[11px] font-mono text-white/90 bg-slate-900/60 backdrop-blur-md px-2.5 py-1 rounded-lg border border-white/20 shadow-sm">
           ID: <strong>{schoolId}</strong>
         </span>
       </header>
 
       {/* Main Institution Card */}
-      <main className="w-full max-w-md mx-auto my-auto">
-        <div className="bg-white rounded-2xl shadow-xl border border-slate-200/90 p-7 sm:p-8">
+      <main className="relative z-10 w-full max-w-md mx-auto my-auto py-4">
+        <div className="bg-white/95 backdrop-blur-md rounded-2xl shadow-2xl border border-white/40 p-7 sm:p-8">
           {/* Institution Crest, Name, and Branding */}
           <div className="text-center mb-6 pb-5 border-b border-slate-100">
             {branding.logo ? (
@@ -625,7 +637,7 @@ export default function Login() {
       </main>
 
       {/* Footer */}
-      <footer className="text-center text-[11px] text-slate-400 pb-2">
+      <footer className="relative z-10 text-center text-[11px] text-white/90 drop-shadow-sm font-medium pb-2">
         <span>Powered by EduCore Cloud</span>
       </footer>
     </div>
