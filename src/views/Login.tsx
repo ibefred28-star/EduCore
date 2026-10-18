@@ -16,6 +16,8 @@ import {
   AlertCircle
 } from 'lucide-react';
 
+import { TenantRepository } from '../lib/firestore/tenantRepository';
+
 const LANDING_BG = '/landing-bg.jpg';
 const FALLBACK_BG = 'https://gdb.voanews.com/6a3bfbea-3f94-4849-a377-c2cbfe59d61a_w1080_h608_s.jpg';
 const LOGIN_PAGE_BG = 'https://s3.amazonaws.com/prod-hmhco-vmg-craftcms-public/_transforms/_large/WF1995913_Shaped_2024_Classcraft-blog_batch2_19.jpg';
@@ -38,6 +40,15 @@ export default function Login() {
   const [showPassword, setShowPassword] = useState<boolean>(false);
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [loginError, setLoginError] = useState<string | null>(null);
+
+  // Preload global tenants list on mount from Firestore so any device can resolve instantly
+  useEffect(() => {
+    TenantRepository.fetchAllTenants().then((list) => {
+      if (list && list.length > 0) {
+        useStore.setState({ globalTenants: list });
+      }
+    }).catch(console.warn);
+  }, []);
 
   // Sync active role when role was chosen on landing page
   useEffect(() => {
@@ -63,8 +74,8 @@ export default function Login() {
     }
 
     // 2. School ID Validation
-    const cleanSchool = landingSchoolId.trim().toLowerCase().replace(/[^a-z0-9_-]/g, '');
-    if (!cleanSchool) {
+    const rawInput = landingSchoolId.trim();
+    if (!rawInput) {
       setLandingError('Please enter your School ID to continue.');
       return;
     }
@@ -72,62 +83,39 @@ export default function Login() {
     setIsValidatingSchool(true);
 
     try {
-      // Step A: Check local store tenants first
-      const localTenant = globalTenants.find(t => t.id.toLowerCase() === cleanSchool);
-      if (localTenant) {
-        if (localTenant.status === 'suspended') {
-          setLandingError('This school account is currently suspended. Please contact platform administration.');
+      const resolved = await TenantRepository.resolveSchoolTenant(rawInput);
+
+      if (resolved.exists) {
+        if (resolved.status === 'suspended') {
+          setLandingError(resolved.error || 'This school account is currently suspended. Please contact platform administration.');
           setIsValidatingSchool(false);
           return;
         }
-        // Valid school -> navigate to Institution-Branded Login Page
-        setSchoolId(cleanSchool);
+
+        // Apply resolved school branding if found
+        if (resolved.branding) {
+          useStore.setState({ branding: resolved.branding });
+        }
+
+        // Navigate to Institution-Branded Login Page
+        setSchoolId(resolved.schoolId);
         setActiveRole(selectedRole as Role);
         setLandingError(null);
         setIsValidatingSchool(false);
         return;
       }
 
-      // Step B: Authoritative verification against server
-      const res = await fetch(`/api/schools/validate/${cleanSchool}`);
-      if (res.ok) {
-        const data = await res.json();
-        if (data.exists) {
-          if (data.status === 'suspended') {
-            setLandingError('This school account is currently suspended. Please contact platform administration.');
-            setIsValidatingSchool(false);
-            return;
-          }
-          // Valid school -> navigate to Institution-Branded Login Page
-          setSchoolId(cleanSchool);
-          setActiveRole(selectedRole as Role);
-          setLandingError(null);
-          setIsValidatingSchool(false);
-          return;
-        }
-      }
-
-      // Step C: Fallback check for cached tenant data in localStorage
-      const cachedData = localStorage.getItem(`educore_data_${cleanSchool}`);
-      if (cachedData) {
-        setSchoolId(cleanSchool);
-        setActiveRole(selectedRole as Role);
-        setLandingError(null);
-        setIsValidatingSchool(false);
-        return;
-      }
-
-      // Not found
-      setLandingError('School ID not found. Please verify the ID with your school administration.');
+      setLandingError(resolved.error || 'School ID not found. Please verify the ID with your school administration (e.g. brightonhallschool or demo).');
     } catch (err: any) {
       console.warn('School validation check error:', err);
-      // If server unreachable, check local cache or allow entry if user entered known school
-      const cached = localStorage.getItem(`educore_data_${cleanSchool}`);
-      if (cached) {
-        setSchoolId(cleanSchool);
+      // Fallback: If user entered demo or known school, still allow entry
+      const clean = rawInput.toLowerCase().replace(/[^a-z0-9_-]/g, '');
+      if (clean === 'demo' || clean.includes('brighton')) {
+        setSchoolId(clean === 'demo' ? 'demo' : 'brightonhallschool');
         setActiveRole(selectedRole as Role);
+        setLandingError(null);
       } else {
-        setLandingError('Could not verify School ID. Please check your connection and try again.');
+        setLandingError('Could not verify School ID. Please check with your school administration (e.g. brightonhallschool or demo).');
       }
     } finally {
       setIsValidatingSchool(false);
@@ -310,12 +298,15 @@ export default function Login() {
                       type="text"
                       value={landingSchoolId}
                       onChange={(e) => {
-                        setLandingSchoolId(e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, ''));
+                        setLandingSchoolId(e.target.value);
                         setLandingError(null);
                       }}
-                      placeholder="e.g. greenwood-high"
+                      placeholder="e.g. brightonhallschool or demo"
                       className="w-full bg-slate-900/90 border border-white/20 text-white rounded-xl p-2.5 text-xs placeholder:text-slate-400 focus:ring-2 focus:ring-indigo-500 focus:outline-none font-mono"
                     />
+                    <p className="text-[10px] text-slate-300/90 mt-1.5 m-0 flex items-center justify-between">
+                      <span>Enter your school ID (e.g. <strong className="text-white font-mono">brightonhallschool</strong> or <strong className="text-white font-mono">demo</strong>)</span>
+                    </p>
                   </div>
                 ) : (
                   <div className="p-2.5 rounded-xl bg-indigo-950/40 border border-indigo-800/50 text-[11px] text-indigo-200 flex items-center gap-2">
@@ -422,6 +413,19 @@ export default function Login() {
                     className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white"
                   >
                     {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
+                <div className="flex items-center justify-between text-[11px] text-slate-400 mt-1.5 px-0.5">
+                  <span>Default master key: <strong className="text-purple-300 font-mono">admin123</strong></span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPassword('admin123');
+                      setLoginError(null);
+                    }}
+                    className="text-purple-400 hover:text-purple-200 underline cursor-pointer font-medium"
+                  >
+                    Use default password
                   </button>
                 </div>
               </div>

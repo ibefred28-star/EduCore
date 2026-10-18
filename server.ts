@@ -54,6 +54,17 @@ async function startServer() {
   // JSON Body Parser
   app.use(express.json());
 
+  // CORS & Preflight handling
+  app.use((req, res, next) => {
+    res.header('Access-Control-Allow-Origin', '*');
+    res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+    res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
+    if (req.method === 'OPTIONS') {
+      return res.sendStatus(200);
+    }
+    next();
+  });
+
   // API route for health
   app.get("/api/health", async (req, res) => {
     try {
@@ -67,13 +78,14 @@ async function startServer() {
   // Public endpoint to validate School ID and fetch basic institutional branding
   app.get("/api/schools/validate/:schoolId", async (req, res) => {
     try {
-      const cleanSchool = (req.params.schoolId || '').trim().toLowerCase().replace(/[^a-z0-9_-]/g, '');
-      if (!cleanSchool) {
+      let cleanSchool = (req.params.schoolId || '').trim().toLowerCase().replace(/[^a-z0-9_-]/g, '');
+      const normInput = cleanSchool.replace(/[^a-z0-9]/g, '');
+      if (!cleanSchool && !normInput) {
         return res.status(400).json({ exists: false, error: 'School ID is required.' });
       }
 
       // 1. Built-in Demo School
-      if (cleanSchool === 'demo') {
+      if (cleanSchool === 'demo' || normInput === 'demo') {
         return res.json({
           exists: true,
           schoolId: 'demo',
@@ -94,7 +106,15 @@ async function startServer() {
       const tenantsDoc = await getFirestoreDocRest('app_state', 'GLOBAL_TENANTS');
       const tenantsData = parseFirestoreDoc(tenantsDoc);
       if (tenantsData && Array.isArray(tenantsData.tenants)) {
-        tenant = tenantsData.tenants.find((t: any) => (t.id || '').toLowerCase() === cleanSchool);
+        tenant = tenantsData.tenants.find((t: any) => {
+          const tId = (t.id || '').toLowerCase();
+          const tNorm = tId.replace(/[^a-z0-9]/g, '');
+          const nameNorm = (t.name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+          return tId === cleanSchool || tNorm === normInput || nameNorm === normInput || (normInput.length >= 4 && (tNorm.includes(normInput) || normInput.includes(tNorm) || nameNorm.includes(normInput)));
+        });
+        if (tenant && tenant.id) {
+          cleanSchool = tenant.id;
+        }
       }
 
       // Check if school is archived/deleted

@@ -364,17 +364,15 @@ export const useStore = create<StoreState>((set, get) => {
     initSync: () => {
       const state = get();
       
-      // Handle Super Admin Sync (Global Tenants)
+      // Global Tenants Sync (Loads tenant directory so all devices can validate schools)
+      const tenantsRef = doc(db, 'app_state', 'GLOBAL_TENANTS');
+      getDoc(tenantsRef).then((snapshot) => {
+        if (snapshot.exists() && snapshot.data().tenants) {
+          set({ globalTenants: snapshot.data().tenants });
+        }
+      }).catch(console.warn);
+
       if (state.currentRole === 'superadmin') {
-        const tenantsRef = doc(db, 'app_state', 'GLOBAL_TENANTS');
-        getDoc(tenantsRef).then((snapshot) => {
-          if (snapshot.exists() && snapshot.data().tenants) {
-            set({ globalTenants: snapshot.data().tenants });
-          } else {
-            setDoc(tenantsRef, { tenants: [] }, { merge: true });
-          }
-        });
-        
         if (state.unsubscribeTenants) state.unsubscribeTenants();
         const unsub = onSnapshot(tenantsRef, (snapshot) => {
           if (snapshot.exists() && snapshot.data().tenants) {
@@ -384,14 +382,14 @@ export const useStore = create<StoreState>((set, get) => {
         set({ unsubscribeTenants: unsub });
         return;
       }
-      
-      // Regular School Sync
+
+      // Regular School Sync - Firestore is the primary authoritative source
       if (state.unsubscribeSnapshot) {
         state.unsubscribeSnapshot();
         set({ unsubscribeSnapshot: null });
       }
-      
-      if (!state.syncConfig || !state.schoolId) return;
+
+      if (!state.schoolId) return;
 
       try {
         const docRef = doc(db, 'app_state', state.schoolId);
@@ -437,6 +435,7 @@ export const useStore = create<StoreState>((set, get) => {
             }
           } else {
             // ONLY if school is demo, allow seeding defaults into Firestore
+            if (state.schoolId === 'demo') {
               setDoc(docRef, {
                 state: state.data,
                 branding: state.branding,
@@ -461,6 +460,7 @@ export const useStore = create<StoreState>((set, get) => {
                 }).catch(() => {});
               });
             }
+          }
         }).catch((err) => {
           console.warn('Initial getDoc sync warning:', err);
         });
