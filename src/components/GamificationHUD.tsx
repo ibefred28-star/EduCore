@@ -1,6 +1,10 @@
 import React, { useState, useMemo } from 'react';
 import { useStore } from '../store';
-import { useStudentResultsSubscription } from '../hooks/useDomainSubscriptions';
+import {
+  useStudentResultsSubscription,
+  useSchoolResultsSubscription,
+  useStudentsSubscription
+} from '../hooks/useDomainSubscriptions';
 import {
   calculateStudentTotalXP,
   getStudentLevel,
@@ -36,21 +40,32 @@ export default function GamificationHUD() {
     currentRole === 'student' ? currentStudentId : null
   );
 
-  const studentResults = useMemo(() => {
-    if (liveStudentResults !== null && liveStudentResults !== undefined) {
-      return liveStudentResults;
-    }
-    return (data.results || []).filter(r => r.studentId === currentStudentId);
-  }, [liveStudentResults, data.results, currentStudentId]);
+  // Real-time results subscription for all school results
+  const { results: liveSchoolResults } = useSchoolResultsSubscription(schoolId);
+  const { students: liveStudents } = useStudentsSubscription(schoolId);
 
-  // Overall effective results for school
+  const targetStudents = useMemo(() => {
+    return (liveStudents && liveStudents.length > 0) ? liveStudents : (data.students || []);
+  }, [liveStudents, data.students]);
+
+  // Overall effective results for school (merging store and live results)
   const allResults = useMemo(() => {
-    if (liveStudentResults !== null && liveStudentResults !== undefined) {
-      const others = (data.results || []).filter(r => r.studentId !== currentStudentId);
-      return [...others, ...liveStudentResults];
-    }
-    return data.results || [];
-  }, [data.results, liveStudentResults, currentStudentId]);
+    const map = new Map<string, any>();
+    (data.results || []).forEach(r => map.set(String(r.id), r));
+    (liveSchoolResults || []).forEach(r => map.set(String(r.id), r));
+    (liveStudentResults || []).forEach(r => map.set(String(r.id), r));
+    return Array.from(map.values()).map(r => {
+      if (String(r.type || '').trim().toUpperCase() === 'AFL') {
+        return { ...r, type: 'CA 1' };
+      }
+      return r;
+    });
+  }, [data.results, liveSchoolResults, liveStudentResults]);
+
+  const studentResults = useMemo(() => {
+    const studentIdNorm = currentStudentId.trim().toLowerCase();
+    return allResults.filter(r => (r.studentId || '').trim().toLowerCase() === studentIdNorm);
+  }, [allResults, currentStudentId]);
 
   // Gamification stats
   const xpStats = useMemo(() => {
@@ -63,8 +78,8 @@ export default function GamificationHUD() {
 
   // Leaderboard ranking
   const leaderboard = useMemo(() => {
-    return buildLeaderboard(data.students, allResults, currentStudentId, studentClass);
-  }, [data.students, allResults, currentStudentId, studentClass]);
+    return buildLeaderboard(targetStudents, allResults, currentStudentId, studentClass);
+  }, [targetStudents, allResults, currentStudentId, studentClass]);
 
   const myEntry = leaderboard.currentUserEntry;
 

@@ -5,7 +5,11 @@ import { Button, Modal, Textarea, Input } from '../components/ui';
 import { isStudentInTeacherClasses } from '../lib/classUtils';
 import { FunctionsService } from '../lib/functions/functionsService';
 import { ResultRepository } from '../lib/firestore/repositories/resultRepository';
-import { useStudentResultsSubscription } from '../hooks/useDomainSubscriptions';
+import {
+  useStudentResultsSubscription,
+  useSchoolResultsSubscription,
+  useStudentsSubscription
+} from '../hooks/useDomainSubscriptions';
 import { CheckCircle2, Clock, Award, AlertCircle, FileText, Wrench, ShieldAlert, Trash2, AlertTriangle } from 'lucide-react';
 import { evaluateAnswer, calculateGradeAndRemark, formatOptionDisplay, evaluateAttempt, resolveAuthoritativeQuestions } from '../lib/scoringEngine';
 import GradingDiagnosticView from './GradingDiagnosticView';
@@ -24,42 +28,64 @@ export default function ResultsView({ studentOnly = false }: { studentOnly?: boo
   const [isDeletingResult, setIsDeletingResult] = useState(false);
 
   const isStaff = currentRole === 'teacher' || currentRole === 'admin' || currentRole === 'superadmin';
+  const isStudent = studentOnly || currentRole === 'student';
 
-  const discrepancyCount = useMemo(() => {
-    if (!isStaff) return 0;
-    return (data.results || []).filter(r => {
-      const exam = data.exams.find(e => String(e.id) === String(r.examId));
-      if (!exam || !exam.questions || !r.answers) return false;
-      const evaluated = evaluateAttempt(exam.questions, r.answers, config, r.type);
-      return evaluated.rawScore !== r.raw || evaluated.grade !== r.grade;
-    }).length;
-  }, [data.results, data.exams, config, isStaff]);
+  // Live students subscription
+  const { students: liveStudents } = useStudentsSubscription(schoolId);
+
+  // Live results subscription for students
+  const {
+    results: liveStudentResults,
+    rawResults: rawStudentResults,
+    loading: studentResultsLoading
+  } = useStudentResultsSubscription(
+    schoolId,
+    isStudent ? currentUser?.id : null
+  );
+
+  // Live results subscription for staff (all pupils)
+  const { results: liveSchoolResults } = useSchoolResultsSubscription(
+    !isStudent ? schoolId : null
+  );
 
   const teacher = currentRole === 'teacher' 
     ? data.teachers.find(t => (t.id || '').trim().toLowerCase() === (currentUser?.id || '').trim().toLowerCase()) || (currentUser as any)
     : null;
   const teacherClasses = teacher?.classes || [];
 
-  // Live Firestore subscription for students to see newly released grades in real time
-  const isStudent = studentOnly || currentRole === 'student';
-  const { results: liveStudentResults } = useStudentResultsSubscription(
-    schoolId,
-    isStudent ? currentUser?.id : null
-  );
-
   const rs = useMemo(() => {
-    let list = data.results;
+    const map = new Map<string, any>();
+    (data.results || []).forEach(r => map.set(String(r.id), r));
+
+    if (!isStudent && liveSchoolResults && liveSchoolResults.length > 0) {
+      liveSchoolResults.forEach(r => map.set(String(r.id), r));
+    }
+
+    let list = Array.from(map.values());
+
+    // Normalize any AFL results to 'CA 1' per institution policy
+    list = list.map(r => {
+      const typeStr = String(r.type || '').trim().toUpperCase();
+      if (typeStr === 'AFL') {
+        return { ...r, type: 'CA 1' };
+      }
+      return r;
+    });
+
     if (isStudent) {
-      const studentLocal = list.filter(r => r.studentId === currentUser?.id);
-      if (liveStudentResults !== null && liveStudentResults !== undefined) {
-        if (liveStudentResults.length === 0) return [];
-        // Authoritative: Only include results that exist in liveStudentResults.
-        // If a teacher deleted a result, it is removed from Firestore and will not appear here.
+      const studentLocal = list.filter(
+        r => (r.studentId || '').trim().toLowerCase() === (currentUser?.id || '').trim().toLowerCase()
+      );
+      if (liveStudentResults !== null && liveStudentResults !== undefined && !studentResultsLoading) {
+        if (liveStudentResults.length === 0 && rawStudentResults !== null) return [];
         return liveStudentResults.map(r => {
           const existing = studentLocal.find(sl => String(sl.id) === String(r.id));
+          const typeStr = String(r.type || '').trim().toUpperCase();
+          const normType = typeStr === 'AFL' ? 'CA 1' : r.type;
           if (existing && existing.raw > 0 && (!r.raw || r.raw === 0)) {
             return {
               ...r,
+              type: normType,
               raw: existing.raw,
               rawMax: existing.rawMax,
               percentage: existing.percentage,
@@ -68,35 +94,68 @@ export default function ResultsView({ studentOnly = false }: { studentOnly?: boo
               breakdown: existing.breakdown || r.breakdown
             };
           }
-          return r;
+          return { ...r, type: normType };
         });
       }
       return studentLocal;
     } else if (currentRole === 'teacher') {
+      const allStudents = (liveStudents && liveStudents.length > 0) ? liveStudents : data.students;
       return list.filter(r => {
-        const student = data.students.find(s => s.id === r.studentId);
+        const student = allStudents.find(
+          s => (s.id || '').trim().toLowerCase() === (r.studentId || '').trim().toLowerCase()
+        );
         return student && isStudentInTeacherClasses(student.class, teacherClasses);
       });
     }
     return list;
-  }, [data.results, isStudent, liveStudentResults, currentUser?.id, currentRole, data.students, teacherClasses]);
+  }, [
+    data.results,
+    liveSchoolResults,
+    isStudent,
+    liveStudentResults,
+    rawStudentResults,
+    studentResultsLoading,
+    currentUser?.id,
+    currentRole,
+    liveStudents,
+    data.students,
+    teacherClasses
+  ]);
 
-  // Prune any results locally that were deleted by a teacher in Firestore
+  const discrepancyCount = useMemo(() => {
+    if (!isStaff) return 0;
+    return rs.filter(r => {
+      const exam = data.exams.find(e => String(e.id) === String(r.examId));
+      if (!exam || !exam.questions || !r.answers) return false;
+      const evaluated = evaluateAttempt(exam.questions, r.answers, config, r.type);
+      return evaluated.rawScore !== r.raw || evaluated.grade !== r.grade;
+    }).length;
+  }, [rs, data.exams, config, isStaff]);
+
+  // Safe prune: only prune orphan results when Firestore has definitively loaded
   useEffect(() => {
-    if (isStudent && currentUser?.id && liveStudentResults !== null && liveStudentResults !== undefined) {
+    if (
+      isStudent &&
+      currentUser?.id &&
+      !studentResultsLoading &&
+      rawStudentResults !== null &&
+      Array.isArray(liveStudentResults)
+    ) {
       const liveIds = new Set(liveStudentResults.map(r => String(r.id)));
       const hasOrphanLocal = data.results.some(
-        r => r.studentId === currentUser.id && !liveIds.has(String(r.id))
+        r => (r.studentId || '').trim().toLowerCase() === (currentUser.id || '').trim().toLowerCase() &&
+             !liveIds.has(String(r.id))
       );
       if (hasOrphanLocal) {
         updateData(draft => {
           draft.results = draft.results.filter(
-            r => r.studentId !== currentUser.id || liveIds.has(String(r.id))
+            r => (r.studentId || '').trim().toLowerCase() !== (currentUser.id || '').trim().toLowerCase() ||
+                 liveIds.has(String(r.id))
           );
         });
       }
     }
-  }, [isStudent, currentUser?.id, liveStudentResults, data.results, updateData]);
+  }, [isStudent, currentUser?.id, studentResultsLoading, rawStudentResults, liveStudentResults, data.results, updateData]);
 
   // Auto-reconcile results that have answers but raw score is 0 due to sanitized keys at submit time
   useEffect(() => {

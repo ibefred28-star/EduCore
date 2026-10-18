@@ -39,24 +39,32 @@ export const FunctionsService = {
    * Invokes server-authoritative attempt creation.
    * Falls back to client repository if Cloud Function is offline or during development.
    */
-  async startExamAttempt(schoolId: string, examId: string | number): Promise<StartAttemptResult> {
+  async startExamAttempt(
+    schoolId: string,
+    examId: string | number,
+    studentId?: string,
+    studentName?: string,
+    studentClass?: string,
+    durationMinutes: number = 30
+  ): Promise<StartAttemptResult> {
     try {
       const callable = httpsCallable<any, StartAttemptResult>(functions, 'startExamAttempt');
-      const res = await callable({ schoolId, examId });
+      const res = await callable({ schoolId, examId, studentId, studentName, studentClass });
       return res.data;
     } catch (err: any) {
       console.info('Cloud Functions startExamAttempt unavailable/fallback:', err.message);
       // Fallback: create attempt via client repository
-      const attemptId = `attempt_${examId}_${Date.now()}`;
+      const attemptId = `attempt_${examId}_${studentId || 'std'}_${Date.now()}`;
       const now = new Date();
-      const expiry = new Date(now.getTime() + 30 * 60 * 1000);
+      const validDuration = Number(durationMinutes) > 0 ? Number(durationMinutes) : 30;
+      const expiry = new Date(now.getTime() + validDuration * 60 * 1000);
 
       await AttemptRepository.createAttempt(schoolId, {
         id: attemptId,
         examId: String(examId),
-        studentId: 'candidate',
-        studentName: 'Candidate',
-        studentClass: 'Primary 5',
+        studentId: studentId || 'candidate',
+        studentName: studentName || 'Candidate',
+        studentClass: studentClass || 'Primary 5',
         schoolId,
         attemptNumber: 1,
         status: 'in_progress',

@@ -94,41 +94,57 @@ export function computeStudentCASummary(
   const cleanTerm = (t: string) => (t || '').trim().toLowerCase();
   const cleanSession = (s: string) => (s || '').trim().toLowerCase();
 
+  const studentIdNorm = (studentId || '').trim().toLowerCase();
+
   // Filter student assessments for session & term
   const studentAssessments = (assessments || []).filter(a => 
-    a.studentId === studentId &&
+    (a.studentId || '').trim().toLowerCase() === studentIdNorm &&
     (!a.academicSessionId || cleanSession(a.academicSessionId) === cleanSession(academicSession)) &&
     (!a.termId || cleanTerm(a.termId) === cleanTerm(term))
   );
 
   // Fallback to legacyResults if any
-  const studentLegacyResults = (legacyResults || []).filter(r => r.studentId === studentId);
+  const studentLegacyResults = (legacyResults || []).filter(
+    r => (r.studentId || '').trim().toLowerCase() === studentIdNorm
+  );
+
+  const isCA1Type = (t: string = '') => {
+    const clean = t.trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+    return clean === 'ca1' || clean === 'afl';
+  };
+
+  const isCA2Type = (t: string = '') => {
+    const clean = t.trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+    return clean === 'ca2';
+  };
 
   const subjectResults: SubjectCAResult[] = subjectList.map(subj => {
+    const subjNorm = subj.trim().toLowerCase();
+
     // 1. Check primary AssessmentRecord
     const ca1Record = studentAssessments.find(a => 
-      a.subjectId?.toLowerCase() === subj.toLowerCase() && 
-      (a.assessmentType === 'CA1' || (a as any).assessmentType === 'CA 1')
+      (a.subjectId || '').trim().toLowerCase() === subjNorm && 
+      isCA1Type(a.assessmentType)
     );
     const ca2Record = studentAssessments.find(a => 
-      a.subjectId?.toLowerCase() === subj.toLowerCase() && 
-      (a.assessmentType === 'CA2' || (a as any).assessmentType === 'CA 2')
+      (a.subjectId || '').trim().toLowerCase() === subjNorm && 
+      isCA2Type(a.assessmentType)
     );
 
     // 2. Check legacy results fallback if no AssessmentRecord
     const legacyCA1 = !ca1Record ? studentLegacyResults.find(r => 
-      r.subject?.toLowerCase() === subj.toLowerCase() && 
-      (r.type === 'CA 1' || r.type === 'CA1')
+      (r.subject || '').trim().toLowerCase() === subjNorm && 
+      isCA1Type(r.type)
     ) : null;
 
     const legacyCA2 = !ca2Record ? studentLegacyResults.find(r => 
-      r.subject?.toLowerCase() === subj.toLowerCase() && 
-      (r.type === 'CA 2' || r.type === 'CA2')
+      (r.subject || '').trim().toLowerCase() === subjNorm && 
+      isCA2Type(r.type)
     ) : null;
 
     const legacyExam = studentLegacyResults.find(r => 
-      r.subject?.toLowerCase() === subj.toLowerCase() && 
-      r.type === 'Examination'
+      (r.subject || '').trim().toLowerCase() === subjNorm && 
+      (r.type === 'Examination' || (r.type || '').trim().toLowerCase().includes('exam'))
     );
 
     // CA1 score extraction (distinctly preserving 0 vs null)

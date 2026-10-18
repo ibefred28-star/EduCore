@@ -117,20 +117,35 @@ export function calculateResultStats(results: GamifiedResultItem[]): {
 
   results.forEach(r => {
     if (r.subject) subjectsSet.add(r.subject);
-    if (r.percentage === 100) perfectCount++;
-    if (r.percentage && r.percentage >= 80) highScoreExamsCount++;
-    if (r.violations === 0) cleanViolationsExamsCount++;
+    const pct = typeof r.percentage === 'number' ? r.percentage : 0;
+    if (pct === 100) perfectCount++;
+    if (pct >= 80) highScoreExamsCount++;
+    if (!r.violations || r.violations === 0) cleanViolationsExamsCount++;
 
+    let breakdownCorrect = 0;
     if (Array.isArray(r.breakdown) && r.breakdown.length > 0) {
       r.breakdown.forEach(b => {
         totalQuestionsCount++;
-        if (b.isCorrect) correctAnswersCount++;
+        if (b.isCorrect === true || (typeof b.awardedMarks === 'number' && b.awardedMarks > 0)) {
+          breakdownCorrect++;
+        }
       });
-    } else {
-      const raw = typeof r.raw === 'number' ? Math.max(0, r.raw) : 0;
-      const rawMax = typeof r.rawMax === 'number' && r.rawMax > 0 ? r.rawMax : raw;
-      correctAnswersCount += raw;
-      totalQuestionsCount += rawMax;
+    }
+
+    const raw = typeof r.raw === 'number' ? Math.max(0, r.raw) : 0;
+    const rawMax = typeof r.rawMax === 'number' && r.rawMax > 0
+      ? r.rawMax
+      : (Array.isArray(r.breakdown) && r.breakdown.length > 0 ? r.breakdown.length : raw);
+
+    // Fallback: if breakdown didn't have correct items but percentage or raw is positive
+    let resolvedCorrect = Math.max(breakdownCorrect, raw);
+    if (resolvedCorrect === 0 && pct > 0 && rawMax > 0) {
+      resolvedCorrect = Math.round((pct / 100) * rawMax);
+    }
+
+    correctAnswersCount += resolvedCorrect;
+    if (!Array.isArray(r.breakdown) || r.breakdown.length === 0) {
+      totalQuestionsCount += (rawMax || resolvedCorrect || 1);
     }
   });
 
@@ -487,7 +502,10 @@ export function buildLeaderboard(
   }
 
   const entries: LeaderboardEntry[] = targetStudents.map(student => {
-    const studentResults = results.filter(r => r.studentId === student.id);
+    const studentIdNorm = (student.id || '').trim().toLowerCase();
+    const studentResults = results.filter(
+      r => (r.studentId || '').trim().toLowerCase() === studentIdNorm
+    );
     const xpStats = calculateStudentTotalXP(student.id, studentResults);
     const levelInfo = getStudentLevel(xpStats.totalXP);
     const badges = evaluateBadges(student.id, studentResults);
@@ -502,7 +520,7 @@ export function buildLeaderboard(
       levelInfo,
       badgeCount: unlockedBadges,
       streakDays: xpStats.streakDays,
-      isCurrentUser: student.id === currentStudentId
+      isCurrentUser: (student.id || '').trim().toLowerCase() === (currentStudentId || '').trim().toLowerCase()
     };
   });
 

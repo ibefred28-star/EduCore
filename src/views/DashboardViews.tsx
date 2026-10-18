@@ -5,7 +5,12 @@ import { Chart as ChartJS, CategoryScale, LinearScale, BarElement, Title, Toolti
 import { useState, useMemo, useEffect } from 'react';
 import { useToastStore } from '../store/toast';
 import { isStudentInTeacherClasses } from '../lib/classUtils';
-import { useAnnouncementsSubscription, useStudentResultsSubscription, useLearningResourcesSubscription } from '../hooks/useDomainSubscriptions';
+import {
+  useAnnouncementsSubscription,
+  useStudentResultsSubscription,
+  useSchoolResultsSubscription,
+  useLearningResourcesSubscription
+} from '../hooks/useDomainSubscriptions';
 import { Bell, Megaphone, Info, BookOpen, Volume2, Sparkles, Trophy, Crown, ArrowRight, Zap, Flame, Award } from 'lucide-react';
 import GamificationHUD from '../components/GamificationHUD';
 import LeaderboardView from '../components/LeaderboardView';
@@ -43,11 +48,18 @@ export default function DashboardHome({ onNavigate }: DashboardHomeProps = {}) {
 
   const studentClass = currentUser && currentRole === 'student' ? (currentUser as any).class : '';
 
-  // Real-time student results subscription (reflects teacher result deletions instantaneously)
-  const { results: liveStudentResults } = useStudentResultsSubscription(
+  // Real-time student results subscription
+  const {
+    results: liveStudentResults,
+    rawResults: rawStudentResults,
+    loading: studentResultsLoading
+  } = useStudentResultsSubscription(
     schoolId,
     currentRole === 'student' ? currentUser?.id : null
   );
+
+  // Real-time all school results subscription
+  const { results: liveSchoolResults } = useSchoolResultsSubscription(schoolId);
 
   // Real-time learning resources subscription
   const { resources: liveLearningResources } = useLearningResourcesSubscription(
@@ -71,30 +83,72 @@ export default function DashboardHome({ onNavigate }: DashboardHomeProps = {}) {
     return list.length;
   }, [liveLearningResources, data.learningResources, currentRole, studentClass]);
 
-  // Reconciled student results (if teacher deleted a result, liveStudentResults won't have it!)
-  const effectiveStudentResults = useMemo(() => {
-    if (liveStudentResults !== null && liveStudentResults !== undefined) {
-      return liveStudentResults;
-    }
-    return (data.results || []).filter(r => r.studentId === currentUser?.id);
-  }, [liveStudentResults, data.results, currentUser?.id]);
+  // Combined all results across store and Firestore (with AFL normalized to CA 1)
+  const allReconciledResults = useMemo(() => {
+    const map = new Map<string, any>();
+    (data.results || []).forEach(r => map.set(String(r.id), r));
+    (liveSchoolResults || []).forEach(r => map.set(String(r.id), r));
+    (liveStudentResults || []).forEach(r => map.set(String(r.id), r));
+    return Array.from(map.values()).map(r => {
+      if (String(r.type || '').trim().toUpperCase() === 'AFL') {
+        return { ...r, type: 'CA 1' };
+      }
+      return r;
+    });
+  }, [data.results, liveSchoolResults, liveStudentResults]);
 
-  // Prune any results locally that were deleted by a teacher in Firestore
+  // Reconciled student results
+  const effectiveStudentResults = useMemo(() => {
+    const studentLocal = (data.results || []).filter(
+      r => (r.studentId || '').trim().toLowerCase() === (currentUser?.id || '').trim().toLowerCase()
+    );
+    if (!studentResultsLoading && rawStudentResults !== null && liveStudentResults && liveStudentResults.length > 0) {
+      return liveStudentResults.map(r => {
+        const existing = studentLocal.find(sl => String(sl.id) === String(r.id));
+        const normType = String(r.type || '').trim().toUpperCase() === 'AFL' ? 'CA 1' : r.type;
+        if (existing && existing.raw > 0 && (!r.raw || r.raw === 0)) {
+          return {
+            ...r,
+            type: normType,
+            raw: existing.raw,
+            rawMax: existing.rawMax,
+            percentage: existing.percentage,
+            grade: existing.grade,
+            remark: existing.remark,
+            breakdown: existing.breakdown || r.breakdown
+          };
+        }
+        return { ...r, type: normType };
+      });
+    }
+    return studentLocal;
+  }, [liveStudentResults, rawStudentResults, studentResultsLoading, data.results, currentUser?.id]);
+
+  // Safe prune: ONLY prune if Firestore has definitively responded and has results
   useEffect(() => {
-    if (currentRole === 'student' && currentUser?.id && liveStudentResults !== null && liveStudentResults !== undefined) {
+    if (
+      currentRole === 'student' &&
+      currentUser?.id &&
+      !studentResultsLoading &&
+      rawStudentResults !== null &&
+      Array.isArray(liveStudentResults) &&
+      liveStudentResults.length > 0
+    ) {
       const liveIds = new Set(liveStudentResults.map(r => String(r.id)));
       const hasOrphanLocal = data.results.some(
-        r => r.studentId === currentUser.id && !liveIds.has(String(r.id))
+        r => (r.studentId || '').trim().toLowerCase() === (currentUser.id || '').trim().toLowerCase() &&
+             !liveIds.has(String(r.id))
       );
       if (hasOrphanLocal) {
         updateData(draft => {
           draft.results = draft.results.filter(
-            r => r.studentId !== currentUser.id || liveIds.has(String(r.id))
+            r => (r.studentId || '').trim().toLowerCase() !== (currentUser.id || '').trim().toLowerCase() ||
+                 liveIds.has(String(r.id))
           );
         });
       }
     }
-  }, [currentRole, currentUser?.id, liveStudentResults, data.results, updateData]);
+  }, [currentRole, currentUser?.id, studentResultsLoading, rawStudentResults, liveStudentResults, data.results, updateData]);
 
   // Filter results: if student, only theirs. if teacher, only students in their classes.
   const results = currentRole === 'student' 
@@ -244,9 +298,10 @@ export default function DashboardHome({ onNavigate }: DashboardHomeProps = {}) {
           <div className="flex flex-col gap-2.5 relative z-10">
             {data.students
               .map(s => {
-                const sResults = s.id === currentUser?.id && currentRole === 'student' && liveStudentResults !== null && liveStudentResults !== undefined
-                  ? liveStudentResults
-                  : data.results.filter(r => r.studentId === s.id);
+                const sIdKey = (s.id || '').trim().toLowerCase();
+                const sResults = allReconciledResults.filter(
+                  r => (r.studentId || '').trim().toLowerCase() === sIdKey
+                );
                 const xpStats = calculateStudentTotalXP(s.id, sResults);
                 const levelInfo = getStudentLevel(xpStats.totalXP);
                 return { ...s, xp: xpStats.totalXP, levelInfo, correctAnswers: xpStats.correctAnswersCount };

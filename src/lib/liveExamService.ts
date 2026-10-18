@@ -215,7 +215,9 @@ export async function completeStudentLiveSession(
   schoolId: string | null | undefined,
   examId: string | number,
   studentId: string,
-  autoSubmitted: boolean = false
+  autoSubmitted: boolean = false,
+  finalScore?: number,
+  finalPercentage?: number
 ): Promise<void> {
   try {
     const docId = getLiveSessionDocId(schoolId, examId, studentId);
@@ -224,17 +226,24 @@ export async function completeStudentLiveSession(
 
     const statusVal = autoSubmitted ? 'auto_submitted' : 'submitted';
 
-    await setDoc(
-      docRef,
-      {
-        attemptStatus: statusVal,
-        submissionStatus: statusVal,
-        submittedAt: new Date(now).toISOString(),
-        lastHeartbeat: now,
-        updatedAt: now
-      },
-      { merge: true }
-    );
+    const updatePayload: any = {
+      attemptStatus: statusVal,
+      submissionStatus: statusVal,
+      submittedAt: new Date(now).toISOString(),
+      lastHeartbeat: now,
+      updatedAt: now,
+      progressPercent: 100
+    };
+
+    if (finalScore !== undefined) {
+      updatePayload.finalScore = finalScore;
+      updatePayload.gradingStatus = 'graded';
+    }
+    if (finalPercentage !== undefined) {
+      updatePayload.finalPercentage = finalPercentage;
+    }
+
+    await setDoc(docRef, updatePayload, { merge: true });
   } catch (err) {
     console.warn('Could not complete student live session:', err);
   }

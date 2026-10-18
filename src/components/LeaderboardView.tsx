@@ -1,6 +1,10 @@
 import React, { useState, useMemo } from 'react';
 import { useStore } from '../store';
-import { useStudentResultsSubscription } from '../hooks/useDomainSubscriptions';
+import {
+  useStudentResultsSubscription,
+  useSchoolResultsSubscription,
+  useStudentsSubscription
+} from '../hooks/useDomainSubscriptions';
 import { buildLeaderboard, evaluateBadges, LeaderboardEntry } from '../lib/gamification';
 import AchievementsModal from './AchievementsModal';
 import {
@@ -38,14 +42,28 @@ export default function LeaderboardView({ onClose, isModal = false }: Leaderboar
     currentRole === 'student' ? currentStudentId : null
   );
 
-  // Build effective results array merging live results for the active student
+  // Real-time results subscription for all school results
+  const { results: liveSchoolResults } = useSchoolResultsSubscription(schoolId);
+  // Real-time students subscription
+  const { students: liveStudents } = useStudentsSubscription(schoolId);
+
+  // Build effective results array merging live results across all sources
   const effectiveResults = useMemo(() => {
-    if (currentRole === 'student' && liveStudentResults !== null && liveStudentResults !== undefined) {
-      const otherResults = data.results.filter(r => r.studentId !== currentStudentId);
-      return [...otherResults, ...liveStudentResults];
-    }
-    return data.results || [];
-  }, [data.results, liveStudentResults, currentRole, currentStudentId]);
+    const map = new Map<string, any>();
+    (data.results || []).forEach(r => map.set(String(r.id), r));
+    (liveSchoolResults || []).forEach(r => map.set(String(r.id), r));
+    (liveStudentResults || []).forEach(r => map.set(String(r.id), r));
+    return Array.from(map.values()).map(r => {
+      if (String(r.type || '').trim().toUpperCase() === 'AFL') {
+        return { ...r, type: 'CA 1' };
+      }
+      return r;
+    });
+  }, [data.results, liveSchoolResults, liveStudentResults]);
+
+  const targetStudents = useMemo(() => {
+    return (liveStudents && liveStudents.length > 0) ? liveStudents : (data.students || []);
+  }, [liveStudents, data.students]);
 
   const [scopeFilter, setScopeFilter] = useState<'class' | 'all'>('class');
   const [searchQuery, setSearchQuery] = useState('');
@@ -54,8 +72,8 @@ export default function LeaderboardView({ onClose, isModal = false }: Leaderboar
   // Build leaderboard
   const { entries, currentUserEntry, totalParticipants } = useMemo(() => {
     const classFilter = scopeFilter === 'class' ? studentClass : 'all';
-    return buildLeaderboard(data.students, effectiveResults, currentStudentId, classFilter);
-  }, [data.students, effectiveResults, currentStudentId, scopeFilter, studentClass]);
+    return buildLeaderboard(targetStudents, effectiveResults, currentStudentId, classFilter);
+  }, [targetStudents, effectiveResults, currentStudentId, scopeFilter, studentClass]);
 
   // Filter by search
   const filteredEntries = useMemo(() => {

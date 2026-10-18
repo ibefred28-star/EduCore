@@ -143,15 +143,51 @@ export function useStudentResultsSubscription(
   const q = useMemo(() => {
     if (!schoolId || !studentId) return null;
     const colRef = collection(db, FirestorePaths.results(schoolId));
-    return query(colRef, where('studentId', '==', studentId), orderBy('submittedAt', 'desc'));
+    // Query without orderBy to avoid composite index requirement
+    return query(colRef, where('studentId', '==', studentId));
   }, [schoolId, studentId]);
 
-  const { data: results, loading, error } = useFirestoreQueryData<FirestoreResultDoc>(q, {
+  const { data: rawResults, loading, error } = useFirestoreQueryData<FirestoreResultDoc>(q, {
     enabled: !!schoolId && !!studentId,
     ...options
   });
 
-  return { results: results || [], loading, error };
+  const results = useMemo(() => {
+    if (!rawResults) return [];
+    return [...rawResults].sort(
+      (a, b) => new Date(b.submittedAt || 0).getTime() - new Date(a.submittedAt || 0).getTime()
+    );
+  }, [rawResults]);
+
+  return { results, rawResults, loading, error };
+}
+
+/**
+ * Live subscription hook for all school results (used by Teachers, Admins, Leaderboards, and Reports)
+ */
+export function useSchoolResultsSubscription(
+  schoolId: string | null | undefined,
+  options?: UseFirestoreSubscriptionOptions
+) {
+  const q = useMemo(() => {
+    if (!schoolId) return null;
+    const colRef = collection(db, FirestorePaths.results(schoolId));
+    return query(colRef);
+  }, [schoolId]);
+
+  const { data: rawResults, loading, error } = useFirestoreQueryData<FirestoreResultDoc>(q, {
+    enabled: !!schoolId,
+    ...options
+  });
+
+  const results = useMemo(() => {
+    if (!rawResults) return [];
+    return [...rawResults].sort(
+      (a, b) => new Date(b.submittedAt || 0).getTime() - new Date(a.submittedAt || 0).getTime()
+    );
+  }, [rawResults]);
+
+  return { results, rawResults, loading, error };
 }
 
 /**

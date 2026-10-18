@@ -13,7 +13,9 @@ import {
 } from '../lib/liveExamService';
 import {
   useExamsSubscription,
-  useExamAttemptsSubscription
+  useExamAttemptsSubscription,
+  useStudentsSubscription,
+  useSchoolResultsSubscription
 } from '../hooks/useDomainSubscriptions';
 import { FirestoreAttemptDoc } from '../lib/firestore/models';
 import {
@@ -44,6 +46,10 @@ export default function LiveExamMonitoring() {
 
   // Live exams subscription
   const { exams: liveExams } = useExamsSubscription(schoolId);
+  // Live students subscription
+  const { students: liveStudents } = useStudentsSubscription(schoolId);
+  // Live results subscription for all candidates
+  const { results: liveResults } = useSchoolResultsSubscription(schoolId);
 
   // Teacher class boundary
   const teacher = currentRole === 'teacher'
@@ -56,14 +62,12 @@ export default function LiveExamMonitoring() {
     let list = (liveExams && liveExams.length > 0) ? (liveExams as Exam[]) : (data.exams || []);
     if (currentRole === 'teacher') {
       list = list.filter(e => {
-        if (e.targetClasses && e.targetClasses.length > 0) {
-          return e.targetClasses.some(c => isStudentInTeacherClasses(c, teacherClasses));
-        }
-        return e.createdBy === currentUser?.id;
+        if (!e.targetClasses || e.targetClasses.length === 0) return true;
+        return e.targetClasses.some(c => isStudentInTeacherClasses(c, teacherClasses));
       });
     }
     return list;
-  }, [liveExams, data.exams, currentRole, currentUser, teacherClasses]);
+  }, [liveExams, data.exams, currentRole, teacherClasses]);
 
   // Active exams first, or any exam
   const activeExams = useMemo(() => {
@@ -124,40 +128,97 @@ export default function LiveExamMonitoring() {
   const eligibleStudents: Student[] = useMemo(() => {
     if (!selectedExam) return [];
 
-    let list = data.students || [];
+    // Combine roster from live Firestore students and local store
+    const studentMap = new Map<string, Student>();
+    const baseList: Student[] = (liveStudents && liveStudents.length > 0)
+      ? (liveStudents as Student[])
+      : (data.students || []);
 
-    // Filter by exam's target classes
+    baseList.forEach(s => {
+      studentMap.set((s.id || '').trim().toLowerCase(), s);
+    });
+
+    // Include any student that has an active liveSession or liveAttempt for this exam
+    liveSessions.forEach(ls => {
+      const key = (ls.studentId || '').trim().toLowerCase();
+      if (!studentMap.has(key)) {
+        studentMap.set(key, {
+          id: ls.studentId,
+          name: ls.studentName || `Pupil ${ls.studentId}`,
+          class: ls.studentClass || 'Primary 5',
+          photo: ls.photo || '',
+          password: ''
+        });
+      }
+    });
+
+    liveAttempts.forEach(la => {
+      const key = (la.studentId || '').trim().toLowerCase();
+      if (!studentMap.has(key)) {
+        studentMap.set(key, {
+          id: la.studentId,
+          name: la.studentName || `Pupil ${la.studentId}`,
+          class: la.studentClass || 'Primary 5',
+          photo: '',
+          password: ''
+        });
+      }
+    });
+
+    let list = Array.from(studentMap.values());
+
+    // Filter by exam's target classes, but preserve any student with an active session
     if (selectedExam.targetClasses && selectedExam.targetClasses.length > 0) {
-      list = list.filter(s =>
-        selectedExam.targetClasses!.some(c => isStudentInTeacherClasses(s.class, [c]))
-      );
+      list = list.filter(s => {
+        const key = (s.id || '').trim().toLowerCase();
+        const hasActiveSession = liveSessions.some(ls => (ls.studentId || '').trim().toLowerCase() === key) ||
+          liveAttempts.some(la => (la.studentId || '').trim().toLowerCase() === key);
+        if (hasActiveSession) return true;
+        return selectedExam.targetClasses!.some(c => isStudentInTeacherClasses(s.class, [c]));
+      });
     }
 
-    // Role boundary: teachers strictly only see students in their assigned classes
+    // Role boundary: teachers strictly see students in their assigned classes (or actively writing)
     if (currentRole === 'teacher' && teacherClasses.length > 0) {
-      list = list.filter(s => isStudentInTeacherClasses(s.class, teacherClasses));
+      list = list.filter(s => {
+        const key = (s.id || '').trim().toLowerCase();
+        const hasActiveSession = liveSessions.some(ls => (ls.studentId || '').trim().toLowerCase() === key) ||
+          liveAttempts.some(la => (la.studentId || '').trim().toLowerCase() === key);
+        if (hasActiveSession) return true;
+        return isStudentInTeacherClasses(s.class, teacherClasses);
+      });
     }
 
     return list;
-  }, [selectedExam, data.students, currentRole, teacherClasses]);
+  }, [selectedExam, liveStudents, data.students, liveSessions, liveAttempts, currentRole, teacherClasses]);
+
+  // Effective results combining live Firestore results and local store
+  const allResults = useMemo(() => {
+    const map = new Map<string, any>();
+    (data.results || []).forEach(r => map.set(String(r.id), r));
+    (liveResults || []).forEach(r => map.set(String(r.id), r));
+    return Array.from(map.values());
+  }, [data.results, liveResults]);
 
   // Map of student live states combining proctoring sessions and authoritative Firestore attempts
   const combinedStudentStates = useMemo(() => {
     const sessionMap = new Map<string, LiveStudentSession>();
-    liveSessions.forEach(s => sessionMap.set(s.studentId, s));
+    liveSessions.forEach(s => sessionMap.set((s.studentId || '').trim().toLowerCase(), s));
 
     const attemptMap = new Map<string, FirestoreAttemptDoc>();
-    liveAttempts.forEach(a => attemptMap.set(a.studentId, a));
+    liveAttempts.forEach(a => attemptMap.set((a.studentId || '').trim().toLowerCase(), a));
 
     const totalQuestions = selectedExam?.questions?.length || 0;
 
     return eligibleStudents.map(student => {
-      const live = sessionMap.get(student.id);
-      const attempt = attemptMap.get(student.id);
+      const studentKey = (student.id || '').trim().toLowerCase();
+      const live = sessionMap.get(studentKey);
+      const attempt = attemptMap.get(studentKey);
 
-      // Check if student has submitted in local app results
-      const localResult = data.results.find(
-        r => r.studentId === student.id && String(r.examId) === String(selectedExam?.id)
+      // Check if student has submitted in all results
+      const matchedResult = allResults.find(
+        r => (r.studentId || '').trim().toLowerCase() === studentKey &&
+             String(r.examId) === String(selectedExam?.id)
       );
 
       let attemptStatus: 'not_started' | 'in_progress' | 'submitted' | 'auto_submitted' = 'not_started';
@@ -175,17 +236,17 @@ export default function LiveExamMonitoring() {
       let finalScore: number | undefined = undefined;
       let finalPercentage: number | undefined = undefined;
 
-      if (localResult) {
+      if (matchedResult) {
         attemptStatus = 'submitted';
         submissionStatus = 'submitted';
         progressPercent = 100;
-        answeredCount = localResult.rawMax || totalQuestions;
-        violationsCount = localResult.violations || 0;
-        submittedAt = localResult.submittedAt;
+        answeredCount = matchedResult.rawMax || totalQuestions;
+        violationsCount = matchedResult.violations || 0;
+        submittedAt = matchedResult.submittedAt;
         answersSynced = true;
         gradingStatus = 'graded';
-        finalScore = localResult.raw;
-        finalPercentage = localResult.percentage;
+        finalScore = matchedResult.raw;
+        finalPercentage = matchedResult.percentage;
       } else if (attempt) {
         attemptStatus = attempt.status === 'abandoned' ? 'not_started' : attempt.status;
         submissionStatus = (attempt.status === 'submitted' || attempt.status === 'auto_submitted') ? attempt.status : 'pending';
@@ -199,6 +260,8 @@ export default function LiveExamMonitoring() {
         submittedAt = attempt.submittedAt || live?.submittedAt;
         answersSynced = !!attempt.answers && Object.keys(attempt.answers).length > 0;
         gradingStatus = attempt.gradingStatus || ((attempt.status === 'submitted' || attempt.status === 'auto_submitted') ? 'graded' : 'in_progress');
+        finalScore = (live?.finalScore !== undefined) ? live.finalScore : undefined;
+        finalPercentage = (live?.finalPercentage !== undefined) ? live.finalPercentage : undefined;
       } else if (live) {
         attemptStatus = live.attemptStatus || 'in_progress';
         submissionStatus = live.submissionStatus || 'pending';
@@ -212,6 +275,8 @@ export default function LiveExamMonitoring() {
         submittedAt = live.submittedAt;
         answersSynced = live.answeredCount > 0;
         gradingStatus = (live.attemptStatus === 'submitted' || live.attemptStatus === 'auto_submitted') ? 'graded' : 'in_progress';
+        finalScore = live.finalScore;
+        finalPercentage = live.finalPercentage;
       }
 
       const sessionObj: LiveStudentSession = {

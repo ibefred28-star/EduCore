@@ -87,8 +87,15 @@ export default function CBT() {
 
     const initExam = async () => {
       try {
-        // Start or resume attempt via authoritative backend
-        const res = await FunctionsService.startExamAttempt(schoolId, exam.id);
+        // Start or resume attempt via authoritative backend with real student metadata
+        const res = await FunctionsService.startExamAttempt(
+          schoolId,
+          exam.id,
+          currentUser.id,
+          currentUser.name,
+          (currentUser as Student).class,
+          exam.duration
+        );
         
         if (!isMounted) return;
 
@@ -109,30 +116,10 @@ export default function CBT() {
         if (res.resumed) {
           showToast('Resumed active exam session');
         }
-
-        // Start Live Proctoring Session in Firestore
-        startStudentLiveSession(schoolId, exam, currentUser as Student);
-
-        // Start heartbeat interval (every 15 seconds)
-        heartbeatTimerRef.current = setInterval(() => {
-          sendStudentLiveHeartbeat(schoolId, exam.id, currentUser.id);
-        }, 15000);
-
-        // Start server-authoritative countdown timer
-        timerRef.current = setInterval(() => {
-          if (!expiryTimeRef.current) return;
-          const remaining = CbtEngine.calculateTimeRemaining(expiryTimeRef.current);
-          setTimeLeft(remaining);
-
-          if (remaining <= 0) {
-            clearInterval(timerRef.current);
-            submitExam(true);
-          }
-        }, 1000);
       } catch (err: any) {
         console.warn('CBT Initialization error:', err);
         // Robust fallback for static / preview / offline environments
-        const fallbackAttemptId = `local_attempt_${exam.id}_${Date.now()}`;
+        const fallbackAttemptId = `attempt_${exam.id}_${currentUser.id}_${Date.now()}`;
         const nowMs = Date.now();
         const durationMins = Number(exam.duration) || 30;
         const expiryIso = new Date(nowMs + durationMins * 60 * 1000).toISOString();
@@ -144,19 +131,32 @@ export default function CBT() {
         const localDraft = CbtEngine.getLocalDraft(fallbackAttemptId) || {};
         setAnswers(localDraft);
         setTimeLeft(durationMins * 60);
-
-        timerRef.current = setInterval(() => {
-          if (!expiryTimeRef.current) return;
-          const remaining = CbtEngine.calculateTimeRemaining(expiryTimeRef.current);
-          setTimeLeft(remaining);
-          if (remaining <= 0) {
-            clearInterval(timerRef.current);
-            submitExam(true);
-          }
-        }, 1000);
         showToast('Exam started in offline-resilient mode');
       } finally {
-        if (isMounted) setIsInitializing(false);
+        if (isMounted) {
+          setIsInitializing(false);
+          // GUARANTEED: Start Live Proctoring Session in Firestore regardless of Cloud Functions state
+          startStudentLiveSession(schoolId, exam, currentUser as Student);
+
+          // Start heartbeat interval (every 12 seconds)
+          clearInterval(heartbeatTimerRef.current);
+          heartbeatTimerRef.current = setInterval(() => {
+            sendStudentLiveHeartbeat(schoolId, exam.id, currentUser.id);
+          }, 12000);
+
+          // Start server-authoritative countdown timer
+          clearInterval(timerRef.current);
+          timerRef.current = setInterval(() => {
+            if (!expiryTimeRef.current) return;
+            const remaining = CbtEngine.calculateTimeRemaining(expiryTimeRef.current);
+            setTimeLeft(remaining);
+
+            if (remaining <= 0) {
+              clearInterval(timerRef.current);
+              submitExam(true);
+            }
+          }, 1000);
+        }
       }
     };
 
@@ -340,13 +340,20 @@ export default function CBT() {
         }
       }
 
-      // 5. Build official result record with full breakdown
+      // 5. Normalize type: if exam was AFL, map to 'CA 1' per institution policy
+      const examTypeClean = String(exam.type || '').trim().toUpperCase();
+      const normalizedType = examTypeClean === 'AFL' ? 'CA 1' : (exam.type || 'CA 1');
+
+      // Update live proctoring session with final graded score
+      completeStudentLiveSession(schoolId, exam.id, currentUser.id, auto, finalScore, finalPct);
+
+      // Build official result record with full breakdown
       const localResultRecord = {
         id: serverResult?.id || `res_${exam.id}_${currentUser.id}_${Date.now()}`,
         studentId: currentUser.id,
         examId: exam.id,
         subject: exam.subject,
-        type: exam.type,
+        type: normalizedType,
         raw: finalScore,
         rawMax: finalRawMax,
         scaled: serverResult?.scaled ?? evaluated.scaledScore,
