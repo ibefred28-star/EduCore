@@ -250,19 +250,21 @@ export async function completeStudentLiveSession(
 }
 
 /**
- * Teacher/Admin real-time listener for all students in an active examination
+ * Teacher/Admin real-time listener for all students in an active examination or entire school
  */
 export function subscribeToExamLiveSessions(
   schoolId: string | null | undefined,
-  examId: string | number,
+  examId: string | number | 'all',
   onUpdate: (sessions: LiveStudentSession[]) => void
 ): Unsubscribe {
   const safeSchoolId = schoolId || 'default';
-  const q = query(
-    collection(db, 'live_exam_sessions'),
-    where('schoolId', '==', safeSchoolId),
-    where('examId', '==', String(examId))
-  );
+  const q = (!examId || examId === 'all')
+    ? query(collection(db, 'live_exam_sessions'), where('schoolId', '==', safeSchoolId))
+    : query(
+        collection(db, 'live_exam_sessions'),
+        where('schoolId', '==', safeSchoolId),
+        where('examId', '==', String(examId))
+      );
 
   return onSnapshot(
     q,
@@ -277,4 +279,14 @@ export function subscribeToExamLiveSessions(
       console.warn('Live exam sessions listener error:', error);
     }
   );
+}
+
+/**
+ * Real-time listener for all live exam sessions across all exams in the school
+ */
+export function subscribeToSchoolLiveSessions(
+  schoolId: string | null | undefined,
+  onUpdate: (sessions: LiveStudentSession[]) => void
+): Unsubscribe {
+  return subscribeToExamLiveSessions(schoolId, 'all', onUpdate);
 }

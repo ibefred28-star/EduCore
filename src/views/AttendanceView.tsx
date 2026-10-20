@@ -14,9 +14,10 @@ export default function AttendanceView() {
     ? data.teachers.find(t => (t.id || '').trim().toLowerCase() === (currentUser?.id || '').trim().toLowerCase()) || (currentUser as any)
     : null;
   const teacherClasses = teacher?.classes || [];
+  const teacherPupils = teacher?.pupils || [];
 
   const students = currentRole === 'teacher' 
-    ? data.students.filter(s => isStudentInTeacherClasses(s.class, teacherClasses))
+    ? data.students.filter(s => isStudentInTeacherClasses(s.class, teacherClasses, teacherPupils, s.id))
     : data.students;
 
   // Real-time Firestore subscription for attendance records

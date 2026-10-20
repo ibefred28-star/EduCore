@@ -26,6 +26,7 @@ export default function TeacherCAScoreEntry() {
   const teacher = currentRole === 'teacher'
     ? data.teachers.find(t => (t.id || '').trim().toLowerCase() === (currentUser?.id || '').trim().toLowerCase()) || (currentUser as any)
     : null;
+  const teacherPupils = teacher?.pupils || [];
 
   // Permissions: Determine assigned classes and subjects
   const assignedClasses = useMemo(() => {
@@ -33,8 +34,13 @@ export default function TeacherCAScoreEntry() {
       return CLASS_OPTIONS;
     }
     const tClasses = teacher?.classes || [];
-    return tClasses.length > 0 ? tClasses : CLASS_OPTIONS;
-  }, [currentRole, teacher]);
+    // If teacher has specific assigned pupils, also include their classes
+    const pupilClasses = (data.students || [])
+      .filter(s => teacherPupils.some(p => p.toLowerCase() === s.id.toLowerCase()))
+      .map(s => s.class);
+    const combined = Array.from(new Set([...tClasses, ...pupilClasses])).filter(Boolean);
+    return combined.length > 0 ? combined : CLASS_OPTIONS;
+  }, [currentRole, teacher, teacherPupils, data.students]);
 
   const assignedSubjects = useMemo(() => {
     if (currentRole === 'admin' || currentRole === 'superadmin') {
@@ -72,8 +78,16 @@ export default function TeacherCAScoreEntry() {
 
   // Students in selected class
   const classStudents = useMemo(() => {
-    return data.students.filter(s => s.class === selectedClass);
-  }, [data.students, selectedClass]);
+    return data.students.filter(s => {
+      if (s.class !== selectedClass) return false;
+      if (currentRole === 'teacher' && teacherPupils.length > 0) {
+        const inTeacherClasses = isStudentInTeacherClasses(s.class, teacher?.classes);
+        const inTeacherPupils = teacherPupils.some(p => p.toLowerCase() === s.id.toLowerCase());
+        return inTeacherClasses || inTeacherPupils;
+      }
+      return true;
+    });
+  }, [data.students, selectedClass, currentRole, teacherPupils, teacher?.classes]);
 
   // Load existing scores from data.assessments
   useEffect(() => {

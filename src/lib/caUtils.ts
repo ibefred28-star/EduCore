@@ -79,21 +79,35 @@ export function getGradeForPercentage(percentage: number | null, grades: Grade[]
  * - Does not silently treat missing scores as zero
  * - Incomplete subjects are clearly tagged and result is marked provisional
  */
+export function matchSubject(sub1: string = '', sub2: string = ''): boolean {
+  const s1 = (sub1 || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+  const s2 = (sub2 || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+  if (!s1 || !s2) return false;
+  if (s1 === s2) return true;
+  if (s1.includes(s2) || s2.includes(s1)) return true;
+
+  const aliases: [string, string][] = [
+    ['math', 'mathematics'],
+    ['maths', 'mathematics'],
+    ['english', 'englishlanguage'],
+    ['basicscience', 'basicscienceandtechnology'],
+    ['basicscience', 'science'],
+    ['history', 'nigerianhistory']
+  ];
+  return aliases.some(([a, b]) => (s1 === a && s2 === b) || (s1 === b && s2 === a));
+}
+
 export function computeStudentCASummary(
   studentId: string,
   applicableSubjects: string[],
   assessments: AssessmentRecord[] = [],
   legacyResults: Result[] = [],
-  config: Config,
+  config: any = { ca1: 20, ca2: 20, exam: 60, passMark: 50 },
   academicSession: string = '2026/2027',
   term: string = 'First Term'
 ): StudentCASummary {
-  // Ensure subject list is non-empty and unique
-  const subjectList = Array.from(new Set(applicableSubjects.length > 0 ? applicableSubjects : ['Mathematics', 'English Language', 'Basic Science & Technology']));
-
   const cleanTerm = (t: string) => (t || '').trim().toLowerCase();
   const cleanSession = (s: string) => (s || '').trim().toLowerCase();
-
   const studentIdNorm = (studentId || '').trim().toLowerCase();
 
   // Filter student assessments for session & term
@@ -103,19 +117,63 @@ export function computeStudentCASummary(
     (!a.termId || cleanTerm(a.termId) === cleanTerm(term))
   );
 
-  // Fallback to legacyResults if any
-  const studentLegacyResults = (legacyResults || []).filter(
-    r => (r.studentId || '').trim().toLowerCase() === studentIdNorm
-  );
+  // Fallback to legacyResults if any, sorted newest to oldest
+  const studentLegacyResults = (legacyResults || [])
+    .filter(r => (r.studentId || '').trim().toLowerCase() === studentIdNorm)
+    .sort((a, b) => new Date(b.submittedAt || 0).getTime() - new Date(a.submittedAt || 0).getTime());
 
-  const isCA1Type = (t: string = '') => {
-    const clean = t.trim().toLowerCase().replace(/[^a-z0-9]/g, '');
-    return clean === 'ca1' || clean === 'afl';
+  // Canonicalize subjects so variations (e.g. "Math" vs "Mathematics", "English" vs "English Language")
+  // do NOT produce duplicate or unrecorded phantom rows
+  const canonicalSubjects: string[] = [];
+  const addCanonical = (subjName: string) => {
+    if (!subjName || !subjName.trim()) return;
+    const trimmed = subjName.trim();
+    const existing = canonicalSubjects.find(s => matchSubject(s, trimmed));
+    if (!existing) {
+      canonicalSubjects.push(trimmed);
+    }
   };
 
-  const isCA2Type = (t: string = '') => {
-    const clean = t.trim().toLowerCase().replace(/[^a-z0-9]/g, '');
-    return clean === 'ca2';
+  (applicableSubjects.length > 0 ? applicableSubjects : ['Mathematics', 'English Language', 'Basic Science & Technology']).forEach(addCanonical);
+  (studentAssessments || []).forEach(a => { if (a.subjectId) addCanonical(a.subjectId); });
+  (studentLegacyResults || []).forEach(r => { if (r.subject) addCanonical(r.subject); });
+  const subjectList = canonicalSubjects;
+
+  const isCA1Type = (typeStr: string = '', titleStr: string = '') => {
+    const cleanType = (typeStr || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+    const cleanTitle = (titleStr || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+    if (cleanType === 'ca1' || cleanType === 'afl' || cleanType.startsWith('ca1') || cleanType === 'continuousassessment1') return true;
+    if (cleanTitle.includes('ca1') || cleanTitle.includes('continuousassessment1') || cleanTitle.includes('firsttest')) return true;
+    return false;
+  };
+
+  const isCA2Type = (typeStr: string = '', titleStr: string = '') => {
+    const cleanType = (typeStr || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+    const cleanTitle = (titleStr || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+    if (cleanType === 'ca2' || cleanType.startsWith('ca2') || cleanType === 'continuousassessment2') return true;
+    if (cleanTitle.includes('ca2') || cleanTitle.includes('continuousassessment2') || cleanTitle.includes('secondtest')) return true;
+    return false;
+  };
+
+  const isExamType = (typeStr: string = '', titleStr: string = '') => {
+    const cleanType = (typeStr || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+    const cleanTitle = (titleStr || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+    return cleanType === 'examination' || cleanType.includes('exam') || cleanTitle.includes('exam') || cleanTitle.includes('terminal');
+  };
+
+  // Helper to safely extract score from a Result record without treating 0 as null
+  const extractResultScore = (res: Result | null, maxMark: number): number | null => {
+    if (!res) return null;
+    if (typeof res.scaled === 'number' && !isNaN(res.scaled)) {
+      return Math.max(0, Math.min(maxMark, Math.round(res.scaled)));
+    }
+    if (typeof res.raw === 'number' && typeof res.rawMax === 'number' && res.rawMax > 0) {
+      return Math.max(0, Math.min(maxMark, Math.round((res.raw / res.rawMax) * maxMark)));
+    }
+    if (typeof res.percentage === 'number' && !isNaN(res.percentage)) {
+      return Math.max(0, Math.min(maxMark, Math.round((res.percentage / 100) * maxMark)));
+    }
+    return null;
   };
 
   const subjectResults: SubjectCAResult[] = subjectList.map(subj => {
@@ -123,63 +181,72 @@ export function computeStudentCASummary(
 
     // 1. Check primary AssessmentRecord
     const ca1Record = studentAssessments.find(a => 
-      (a.subjectId || '').trim().toLowerCase() === subjNorm && 
+      ((a.subjectId || '').trim().toLowerCase() === subjNorm || matchSubject(a.subjectId, subj)) && 
       isCA1Type(a.assessmentType)
     );
     const ca2Record = studentAssessments.find(a => 
-      (a.subjectId || '').trim().toLowerCase() === subjNorm && 
+      ((a.subjectId || '').trim().toLowerCase() === subjNorm || matchSubject(a.subjectId, subj)) && 
       isCA2Type(a.assessmentType)
     );
 
-    // 2. Check legacy results fallback if no AssessmentRecord
-    const legacyCA1 = !ca1Record ? studentLegacyResults.find(r => 
-      (r.subject || '').trim().toLowerCase() === subjNorm && 
-      isCA1Type(r.type)
-    ) : null;
-
-    const legacyCA2 = !ca2Record ? studentLegacyResults.find(r => 
-      (r.subject || '').trim().toLowerCase() === subjNorm && 
-      isCA2Type(r.type)
-    ) : null;
-
-    const legacyExam = studentLegacyResults.find(r => 
-      (r.subject || '').trim().toLowerCase() === subjNorm && 
-      (r.type === 'Examination' || (r.type || '').trim().toLowerCase().includes('exam'))
+    // 2. Check legacy / CBT results fallback
+    const matchingResultsForSubj = studentLegacyResults.filter(r => 
+      (r.subject || '').trim().toLowerCase() === subjNorm || matchSubject(r.subject, subj)
     );
 
-    // CA1 score extraction (distinctly preserving 0 vs null)
+    const matchingCA1Results = matchingResultsForSubj.filter(r => {
+      const title = (r as any).examTitle || (r as any).title || '';
+      return isCA1Type(r.type, title) || (['Test', 'Quiz', 'Assignment'].includes(r.type) && !isCA2Type(r.type, title));
+    }).sort((a, b) => {
+      const scoreA = typeof a.scaled === 'number' ? a.scaled : (a.percentage || 0);
+      const scoreB = typeof b.scaled === 'number' ? b.scaled : (b.percentage || 0);
+      return scoreB - scoreA;
+    });
+    const legacyCA1 = matchingCA1Results.length > 0 ? matchingCA1Results[0] : null;
+
+    const matchingCA2Results = matchingResultsForSubj.filter(r => {
+      const title = (r as any).examTitle || (r as any).title || '';
+      return isCA2Type(r.type, title);
+    }).sort((a, b) => {
+      const scoreA = typeof a.scaled === 'number' ? a.scaled : (a.percentage || 0);
+      const scoreB = typeof b.scaled === 'number' ? b.scaled : (b.percentage || 0);
+      return scoreB - scoreA;
+    });
+    const legacyCA2 = matchingCA2Results.length > 0 ? matchingCA2Results[0] : null;
+
+    const matchingExamResults = matchingResultsForSubj.filter(r => {
+      const title = (r as any).examTitle || (r as any).title || '';
+      return isExamType(r.type, title);
+    }).sort((a, b) => {
+      const scoreA = typeof a.scaled === 'number' ? a.scaled : (a.percentage || 0);
+      const scoreB = typeof b.scaled === 'number' ? b.scaled : (b.percentage || 0);
+      return scoreB - scoreA;
+    });
+    const legacyExam = matchingExamResults.length > 0 ? matchingExamResults[0] : null;
+
+    // CA1 score extraction
+    const ca1Max = config.ca1 || 20;
     let ca1Score: number | null = null;
     if (ca1Record && typeof ca1Record.score === 'number' && !isNaN(ca1Record.score)) {
-      ca1Score = Math.max(0, Math.min(20, ca1Record.score));
+      ca1Score = Math.max(0, Math.min(ca1Max, Math.round(ca1Record.score)));
     } else if (legacyCA1) {
-      if (typeof legacyCA1.scaled === 'number') {
-        ca1Score = Math.max(0, Math.min(20, legacyCA1.scaled));
-      } else if (typeof legacyCA1.raw === 'number' && legacyCA1.rawMax > 0) {
-        ca1Score = Math.round((legacyCA1.raw / legacyCA1.rawMax) * (config.ca1 || 20));
-      }
+      ca1Score = extractResultScore(legacyCA1, ca1Max);
     }
 
     // CA2 score extraction
+    const ca2Max = config.ca2 || 20;
     let ca2Score: number | null = null;
     if (ca2Record && typeof ca2Record.score === 'number' && !isNaN(ca2Record.score)) {
-      ca2Score = Math.max(0, Math.min(20, ca2Record.score));
+      ca2Score = Math.max(0, Math.min(ca2Max, Math.round(ca2Record.score)));
     } else if (legacyCA2) {
-      if (typeof legacyCA2.scaled === 'number') {
-        ca2Score = Math.max(0, Math.min(20, legacyCA2.scaled));
-      } else if (typeof legacyCA2.raw === 'number' && legacyCA2.rawMax > 0) {
-        ca2Score = Math.round((legacyCA2.raw / legacyCA2.rawMax) * (config.ca2 || 20));
-      }
+      ca2Score = extractResultScore(legacyCA2, ca2Max);
     }
 
     // Exam score extraction
-    let examScore: number | null = null;
     const examMax = config.exam || 60;
+    let examScore: number | null = null;
     if (legacyExam) {
-      if (typeof legacyExam.scaled === 'number') {
-        examScore = Math.max(0, Math.min(examMax, legacyExam.scaled));
-      } else if (typeof legacyExam.raw === 'number' && legacyExam.rawMax > 0) {
-        examScore = Math.round((legacyExam.raw / legacyExam.rawMax) * examMax);
-      }
+      examScore = extractResultScore(legacyExam, examMax);
     }
 
     const hasCA1 = ca1Score !== null;

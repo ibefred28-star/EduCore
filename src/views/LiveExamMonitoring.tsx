@@ -9,6 +9,7 @@ import {
   LiveConnectionStatus,
   computeConnectionStatus,
   subscribeToExamLiveSessions,
+  subscribeToSchoolLiveSessions,
   completeStudentLiveSession
 } from '../lib/liveExamService';
 import {
@@ -18,6 +19,7 @@ import {
   useSchoolResultsSubscription
 } from '../hooks/useDomainSubscriptions';
 import { FirestoreAttemptDoc } from '../lib/firestore/models';
+import { matchSubject } from '../lib/caUtils';
 import {
   Activity,
   Radio,
@@ -57,10 +59,10 @@ export default function LiveExamMonitoring() {
     : null;
   const teacherClasses: string[] = teacher?.classes || [];
 
-  // Filter exams available to this user
+  // Filter exams available to this user (only restrict if teacher has specific classes assigned)
   const availableExams = useMemo(() => {
     let list = (liveExams && liveExams.length > 0) ? (liveExams as Exam[]) : (data.exams || []);
-    if (currentRole === 'teacher') {
+    if (currentRole === 'teacher' && teacherClasses.length > 0) {
       list = list.filter(e => {
         if (!e.targetClasses || e.targetClasses.length === 0) return true;
         return e.targetClasses.some(c => isStudentInTeacherClasses(c, teacherClasses));
@@ -94,13 +96,35 @@ export default function LiveExamMonitoring() {
     return availableExams.find(e => String(e.id) === String(selectedExamId));
   }, [availableExams, selectedExamId]);
 
-  // Live sessions received in real time from Firestore listener
+  // Live sessions received in real time from Firestore listener for selected exam
   const [liveSessions, setLiveSessions] = useState<LiveStudentSession[]>([]);
+  // School-wide live sessions across all exams
+  const [allSchoolLiveSessions, setAllSchoolLiveSessions] = useState<LiveStudentSession[]>([]);
   // Local time state to refresh connection presence and remaining time every 5 seconds without database reads
   const [nowTime, setNowTime] = useState<number>(Date.now());
 
   // Real-time authoritative attempts subscription for the selected exam
   const { attempts: liveAttempts } = useExamAttemptsSubscription(schoolId, selectedExamId);
+
+  // Subscribe to all active exam sessions in the school for writer indicators
+  useEffect(() => {
+    const unsub = subscribeToSchoolLiveSessions(schoolId, sessions => {
+      setAllSchoolLiveSessions(sessions);
+    });
+    return () => unsub();
+  }, [schoolId]);
+
+  // If a student is currently writing an exam, auto-switch to that exam if current view has no writers
+  useEffect(() => {
+    if (!allSchoolLiveSessions.length) return;
+    const activeSession = allSchoolLiveSessions.find(s => s.attemptStatus === 'in_progress');
+    if (activeSession && (!selectedExamId || !liveSessions.some(s => s.attemptStatus === 'in_progress'))) {
+      const targetExam = availableExams.find(e => String(e.id) === String(activeSession.examId));
+      if (targetExam && String(targetExam.id) !== String(selectedExamId)) {
+        setSelectedExamId(targetExam.id);
+      }
+    }
+  }, [allSchoolLiveSessions, selectedExamId, availableExams, liveSessions]);
 
   // Subscribe to real-time Firestore listener for selected exam proctoring
   useEffect(() => {
@@ -192,12 +216,18 @@ export default function LiveExamMonitoring() {
     return list;
   }, [selectedExam, liveStudents, data.students, liveSessions, liveAttempts, currentRole, teacherClasses]);
 
-  // Effective results combining live Firestore results and local store
+  // Effective results combining live Firestore results and local store (normalizing AFL to CA 1)
   const allResults = useMemo(() => {
     const map = new Map<string, any>();
     (data.results || []).forEach(r => map.set(String(r.id), r));
     (liveResults || []).forEach(r => map.set(String(r.id), r));
-    return Array.from(map.values());
+    return Array.from(map.values()).map(r => {
+      const typeStr = String(r.type || '').trim().toUpperCase();
+      if (typeStr === 'AFL' || typeStr === 'CA 1' || typeStr === 'CA1') {
+        return { ...r, type: 'CA 1' };
+      }
+      return r;
+    });
   }, [data.results, liveResults]);
 
   // Map of student live states combining proctoring sessions and authoritative Firestore attempts
@@ -215,10 +245,11 @@ export default function LiveExamMonitoring() {
       const live = sessionMap.get(studentKey);
       const attempt = attemptMap.get(studentKey);
 
-      // Check if student has submitted in all results
+      // Check if student has submitted in all results (matching by examId or subject)
       const matchedResult = allResults.find(
         r => (r.studentId || '').trim().toLowerCase() === studentKey &&
-             String(r.examId) === String(selectedExam?.id)
+             (String(r.examId).toLowerCase() === String(selectedExam?.id).toLowerCase() ||
+              (r.subject && selectedExam?.subject && matchSubject(r.subject, selectedExam.subject)))
       );
 
       let attemptStatus: 'not_started' | 'in_progress' | 'submitted' | 'auto_submitted' = 'not_started';
@@ -483,12 +514,17 @@ export default function LiveExamMonitoring() {
                 className="font-bold text-sm bg-slate-50 border-slate-300 mt-0"
               >
                 {availableExams.length === 0 && <option value="">No examinations available</option>}
-                {availableExams.map(ex => (
-                  <option key={ex.id} value={ex.id}>
-                    {ex.status === 'active' ? '🟢 ' : '⚪ '}
-                    {ex.title} ({ex.subject} - {ex.targetClasses?.join(', ') || 'All'})
-                  </option>
-                ))}
+                {availableExams.map(ex => {
+                  const activeWriters = allSchoolLiveSessions.filter(
+                    s => String(s.examId) === String(ex.id) && s.attemptStatus === 'in_progress'
+                  ).length;
+                  return (
+                    <option key={ex.id} value={ex.id}>
+                      {activeWriters > 0 ? `🟢 [${activeWriters} Writing] ` : ex.status === 'active' ? '🟢 ' : '⚪ '}
+                      {ex.title} ({ex.subject} - {ex.targetClasses?.join(', ') || 'All'})
+                    </option>
+                  );
+                })}
               </Select>
             </div>
           </div>

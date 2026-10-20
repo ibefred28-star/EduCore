@@ -54,7 +54,8 @@ export default function LeaderboardView({ onClose, isModal = false }: Leaderboar
     (liveSchoolResults || []).forEach(r => map.set(String(r.id), r));
     (liveStudentResults || []).forEach(r => map.set(String(r.id), r));
     return Array.from(map.values()).map(r => {
-      if (String(r.type || '').trim().toUpperCase() === 'AFL') {
+      const typeStr = String(r.type || '').trim().toUpperCase();
+      if (typeStr === 'AFL' || typeStr === 'CA 1' || typeStr === 'CA1') {
         return { ...r, type: 'CA 1' };
       }
       return r;
@@ -62,16 +63,21 @@ export default function LeaderboardView({ onClose, isModal = false }: Leaderboar
   }, [data.results, liveSchoolResults, liveStudentResults]);
 
   const targetStudents = useMemo(() => {
-    return (liveStudents && liveStudents.length > 0) ? liveStudents : (data.students || []);
+    const map = new Map<string, any>();
+    (data.students || []).forEach(s => map.set((s.id || '').trim().toLowerCase(), s));
+    (liveStudents || []).forEach(s => map.set((s.id || '').trim().toLowerCase(), s));
+    return Array.from(map.values());
   }, [liveStudents, data.students]);
 
-  const [scopeFilter, setScopeFilter] = useState<'class' | 'all'>('class');
+  const [scopeFilter, setScopeFilter] = useState<'class' | 'all'>(() => {
+    return currentRole === 'student' && studentClass ? 'class' : 'all';
+  });
   const [searchQuery, setSearchQuery] = useState('');
   const [showBadgesModal, setShowBadgesModal] = useState(false);
 
   // Build leaderboard
   const { entries, currentUserEntry, totalParticipants } = useMemo(() => {
-    const classFilter = scopeFilter === 'class' ? studentClass : 'all';
+    const classFilter = scopeFilter === 'class' && studentClass ? studentClass : 'all';
     return buildLeaderboard(targetStudents, effectiveResults, currentStudentId, classFilter);
   }, [targetStudents, effectiveResults, currentStudentId, scopeFilter, studentClass]);
 

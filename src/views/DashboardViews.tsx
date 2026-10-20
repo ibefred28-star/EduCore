@@ -9,7 +9,8 @@ import {
   useAnnouncementsSubscription,
   useStudentResultsSubscription,
   useSchoolResultsSubscription,
-  useLearningResourcesSubscription
+  useLearningResourcesSubscription,
+  useStudentsSubscription
 } from '../hooks/useDomainSubscriptions';
 import { Bell, Megaphone, Info, BookOpen, Volume2, Sparkles, Trophy, Crown, ArrowRight, Zap, Flame, Award } from 'lucide-react';
 import GamificationHUD from '../components/GamificationHUD';
@@ -36,15 +37,27 @@ export default function DashboardHome({ onNavigate }: DashboardHomeProps = {}) {
   const roleForAnnouncements = currentRole === 'student' ? 'student' : currentRole === 'teacher' ? 'teacher' : 'admin';
   const { announcements } = useAnnouncementsSubscription(schoolId, roleForAnnouncements);
 
+  // Live students subscription
+  const { students: liveStudents } = useStudentsSubscription(schoolId);
+
   const teacher = currentRole === 'teacher' 
     ? data.teachers.find(t => (t.id || '').trim().toLowerCase() === (currentUser?.id || '').trim().toLowerCase()) || (currentUser as any)
     : null;
   const teacherClasses = teacher?.classes || [];
+  const teacherPupils = teacher?.pupils || [];
+
+  // Unified roster combining live Firestore students and local store
+  const allStudentsList = useMemo(() => {
+    const map = new Map<string, any>();
+    (data.students || []).forEach(s => map.set((s.id || '').trim().toLowerCase(), s));
+    (liveStudents || []).forEach(s => map.set((s.id || '').trim().toLowerCase(), s));
+    return Array.from(map.values());
+  }, [data.students, liveStudents]);
   
-  // Filter students: if teacher, only students in their classes
+  // Filter students: if teacher, only students in their classes or assigned pupils (or all if unrestricted)
   const students = currentRole === 'teacher' 
-    ? data.students.filter(s => isStudentInTeacherClasses(s.class, teacherClasses))
-    : data.students;
+    ? allStudentsList.filter(s => isStudentInTeacherClasses(s.class, teacherClasses, teacherPupils, s.id))
+    : allStudentsList;
 
   const studentClass = currentUser && currentRole === 'student' ? (currentUser as any).class : '';
 
@@ -90,7 +103,8 @@ export default function DashboardHome({ onNavigate }: DashboardHomeProps = {}) {
     (liveSchoolResults || []).forEach(r => map.set(String(r.id), r));
     (liveStudentResults || []).forEach(r => map.set(String(r.id), r));
     return Array.from(map.values()).map(r => {
-      if (String(r.type || '').trim().toUpperCase() === 'AFL') {
+      const typeStr = String(r.type || '').trim().toUpperCase();
+      if (typeStr === 'AFL' || typeStr === 'CA 1' || typeStr === 'CA1') {
         return { ...r, type: 'CA 1' };
       }
       return r;
@@ -124,41 +138,16 @@ export default function DashboardHome({ onNavigate }: DashboardHomeProps = {}) {
     return studentLocal;
   }, [liveStudentResults, rawStudentResults, studentResultsLoading, data.results, currentUser?.id]);
 
-  // Safe prune: ONLY prune if Firestore has definitively responded and has results
-  useEffect(() => {
-    if (
-      currentRole === 'student' &&
-      currentUser?.id &&
-      !studentResultsLoading &&
-      rawStudentResults !== null &&
-      Array.isArray(liveStudentResults) &&
-      liveStudentResults.length > 0
-    ) {
-      const liveIds = new Set(liveStudentResults.map(r => String(r.id)));
-      const hasOrphanLocal = data.results.some(
-        r => (r.studentId || '').trim().toLowerCase() === (currentUser.id || '').trim().toLowerCase() &&
-             !liveIds.has(String(r.id))
-      );
-      if (hasOrphanLocal) {
-        updateData(draft => {
-          draft.results = draft.results.filter(
-            r => (r.studentId || '').trim().toLowerCase() !== (currentUser.id || '').trim().toLowerCase() ||
-                 liveIds.has(String(r.id))
-          );
-        });
-      }
-    }
-  }, [currentRole, currentUser?.id, studentResultsLoading, rawStudentResults, liveStudentResults, data.results, updateData]);
-
-  // Filter results: if student, only theirs. if teacher, only students in their classes.
+  // Filter results: if student, only theirs. if teacher, students in their classes. Uses allReconciledResults!
   const results = currentRole === 'student' 
     ? effectiveStudentResults
     : currentRole === 'teacher'
-    ? data.results.filter(r => {
-        const student = data.students.find(s => s.id === r.studentId);
-        return student && isStudentInTeacherClasses(student.class, teacherClasses);
+    ? allReconciledResults.filter(r => {
+        if (!teacherClasses.length && !teacherPupils.length) return true;
+        const student = allStudentsList.find(s => (s.id || '').trim().toLowerCase() === (r.studentId || '').trim().toLowerCase());
+        return student ? isStudentInTeacherClasses(student.class, teacherClasses, teacherPupils, student.id) : true;
       })
-    : data.results;
+    : allReconciledResults;
 
   // Compute student-specific active exams matching MyExams logic
   const studentActiveExamsCount = currentRole === 'student'
@@ -296,12 +285,13 @@ export default function DashboardHome({ onNavigate }: DashboardHomeProps = {}) {
             </button>
           </div>
           <div className="flex flex-col gap-2.5 relative z-10">
-            {data.students
+            {allStudentsList
               .map(s => {
                 const sIdKey = (s.id || '').trim().toLowerCase();
-                const sResults = allReconciledResults.filter(
-                  r => (r.studentId || '').trim().toLowerCase() === sIdKey
-                );
+                const sResults = allReconciledResults.filter(r => {
+                  const rId = String(r.studentId || (r as any).student?.id || (r as any).candidateId || '').trim().toLowerCase();
+                  return rId === sIdKey;
+                });
                 const xpStats = calculateStudentTotalXP(s.id, sResults);
                 const levelInfo = getStudentLevel(xpStats.totalXP);
                 return { ...s, xp: xpStats.totalXP, levelInfo, correctAnswers: xpStats.correctAnswersCount };

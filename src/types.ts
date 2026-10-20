@@ -40,6 +40,7 @@ export interface Student extends UserBase {
 export interface Teacher extends UserBase {
   subjects: string[];
   classes: string[];
+  pupils?: string[];
 }
 
 export interface Admin extends UserBase {}

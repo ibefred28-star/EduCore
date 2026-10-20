@@ -7,6 +7,7 @@ import { isStudentInTeacherClasses } from './lib/classUtils';
 import { AuthService, LegacyAccountChecker } from './lib/auth/authService';
 import { ExamRepository } from './lib/firestore/repositories/examRepository';
 import { AssessmentRepository } from './lib/firestore/repositories/assessmentRepository';
+import { ResultRepository } from './lib/firestore/repositories/resultRepository';
 
 const SYNC = 'educore_sync_v1';
 
@@ -16,9 +17,30 @@ function sanitizeState(incoming: AppData, fallback: AppData = EMPTY_SCHOOL_DATA)
   
   if (!Array.isArray(copy.students)) copy.students = [];
   if (!Array.isArray(copy.teachers)) copy.teachers = [];
-  if (!Array.isArray(copy.results)) copy.results = [];
+  if (!Array.isArray(copy.exams)) {
+    copy.exams = [];
+  } else {
+    copy.exams = copy.exams.map(e => {
+      if (String(e.type || '').trim().toUpperCase() === 'AFL') {
+        return { ...e, type: 'CA 1' };
+      }
+      return e;
+    });
+  }
+
+  if (!Array.isArray(copy.results)) {
+    copy.results = [];
+  } else {
+    // Normalize any legacy AFL result to CA 1 per institution policy
+    copy.results = copy.results.map(r => {
+      const typeClean = String(r.type || '').trim().toUpperCase();
+      if (typeClean === 'AFL' || typeClean === 'CA1' || typeClean === 'CA 1') {
+        return { ...r, type: 'CA 1' };
+      }
+      return r;
+    });
+  }
   if (!Array.isArray(copy.attendance)) copy.attendance = [];
-  if (!Array.isArray(copy.exams)) copy.exams = [];
   if (!Array.isArray(copy.questions)) copy.questions = [];
   if (!Array.isArray(copy.admins)) copy.admins = [];
   if (!Array.isArray(copy.subjects)) copy.subjects = fallback.subjects || ['Mathematics', 'English Language', 'Basic Science & Technology'];
@@ -44,6 +66,7 @@ interface StoreState {
   unsubscribeSnapshot: (() => void) | null;
   unsubscribeTenants: (() => void) | null;
   unsubscribeAssessments: (() => void) | null;
+  unsubscribeResults: (() => void) | null;
   
   // Actions
   setSchoolId: (id: string | null) => void;
@@ -92,6 +115,7 @@ export const useStore = create<StoreState>((set, get) => {
     unsubscribeSnapshot: null,
     unsubscribeTenants: null,
     unsubscribeAssessments: null,
+    unsubscribeResults: null,
 
     setSchoolId: (id) => {
       if (id) {
@@ -115,7 +139,9 @@ export const useStore = create<StoreState>((set, get) => {
         if (unsub) unsub();
         const unsubA = get().unsubscribeAssessments;
         if (unsubA) unsubA();
-        set({ unsubscribeSnapshot: null, unsubscribeAssessments: null });
+        const unsubR = get().unsubscribeResults;
+        if (unsubR) unsubR();
+        set({ unsubscribeSnapshot: null, unsubscribeAssessments: null, unsubscribeResults: null });
       }
     },
 
@@ -246,6 +272,9 @@ export const useStore = create<StoreState>((set, get) => {
 
       const unsubA = get().unsubscribeAssessments;
       if (unsubA) unsubA();
+
+      const unsubR = get().unsubscribeResults;
+      if (unsubR) unsubR();
       
       set({
         currentUser: null,
@@ -253,6 +282,7 @@ export const useStore = create<StoreState>((set, get) => {
         unsubscribeSnapshot: null,
         unsubscribeTenants: null,
         unsubscribeAssessments: null,
+        unsubscribeResults: null,
         authLoading: false
       });
       // We don't clear schoolId on logout so they stay on the school's login page unless they were superadmin
@@ -532,6 +562,35 @@ export const useStore = create<StoreState>((set, get) => {
           set({ unsubscribeAssessments: unsubAssessments });
         } catch (e) {
           console.warn('Assessments subscription setup error:', e);
+        }
+
+        // Realtime sync from dedicated results subcollection
+        try {
+          const unsubResults = ResultRepository.subscribeSchoolResults(state.schoolId, (records) => {
+            if (records && records.length > 0) {
+              set(curr => {
+                const existing = curr.data.results || [];
+                const map = new Map<string, any>();
+                existing.forEach(r => map.set(String(r.id), r));
+                records.forEach(r => {
+                  const normType = String(r.type || '').trim().toUpperCase() === 'AFL' ? 'CA 1' : r.type;
+                  map.set(String(r.id), { ...r, type: normType });
+                });
+                const merged = Array.from(map.values());
+                const updatedData = { ...curr.data, results: merged };
+                if (curr.schoolId) {
+                  localStorage.setItem(`educore_data_${curr.schoolId}`, JSON.stringify(updatedData));
+                }
+                return { data: updatedData };
+              });
+            }
+          });
+          set({ unsubscribeResults: unsubResults });
+
+          // Background migration: ensure any AFL results in Firestore are moved to CA 1
+          ResultRepository.migrateAflResultsToCA1(state.schoolId).catch(console.warn);
+        } catch (e) {
+          console.warn('Results subscription setup error:', e);
         }
       } catch (e) {
         console.warn('Online sync unavailable', e);

@@ -52,6 +52,7 @@ export default function ResultsView({ studentOnly = false }: { studentOnly?: boo
     ? data.teachers.find(t => (t.id || '').trim().toLowerCase() === (currentUser?.id || '').trim().toLowerCase()) || (currentUser as any)
     : null;
   const teacherClasses = teacher?.classes || [];
+  const teacherPupils = teacher?.pupils || [];
 
   const rs = useMemo(() => {
     const map = new Map<string, any>();
@@ -66,45 +67,36 @@ export default function ResultsView({ studentOnly = false }: { studentOnly?: boo
     // Normalize any AFL results to 'CA 1' per institution policy
     list = list.map(r => {
       const typeStr = String(r.type || '').trim().toUpperCase();
-      if (typeStr === 'AFL') {
+      if (typeStr === 'AFL' || typeStr === 'CA 1' || typeStr === 'CA1') {
         return { ...r, type: 'CA 1' };
       }
       return r;
     });
 
     if (isStudent) {
+      const studentIdNorm = (currentUser?.id || '').trim().toLowerCase();
       const studentLocal = list.filter(
-        r => (r.studentId || '').trim().toLowerCase() === (currentUser?.id || '').trim().toLowerCase()
+        r => (r.studentId || '').trim().toLowerCase() === studentIdNorm
       );
-      if (liveStudentResults !== null && liveStudentResults !== undefined && !studentResultsLoading) {
-        if (liveStudentResults.length === 0 && rawStudentResults !== null) return [];
-        return liveStudentResults.map(r => {
-          const existing = studentLocal.find(sl => String(sl.id) === String(r.id));
+      if (liveStudentResults && liveStudentResults.length > 0) {
+        const mergedMap = new Map<string, any>();
+        studentLocal.forEach(r => mergedMap.set(String(r.id), r));
+        liveStudentResults.forEach(r => {
           const typeStr = String(r.type || '').trim().toUpperCase();
-          const normType = typeStr === 'AFL' ? 'CA 1' : r.type;
-          if (existing && existing.raw > 0 && (!r.raw || r.raw === 0)) {
-            return {
-              ...r,
-              type: normType,
-              raw: existing.raw,
-              rawMax: existing.rawMax,
-              percentage: existing.percentage,
-              grade: existing.grade,
-              remark: existing.remark,
-              breakdown: existing.breakdown || r.breakdown
-            };
-          }
-          return { ...r, type: normType };
+          const normType = (typeStr === 'AFL' || typeStr === 'CA 1' || typeStr === 'CA1') ? 'CA 1' : r.type;
+          mergedMap.set(String(r.id), { ...r, type: normType });
         });
+        return Array.from(mergedMap.values());
       }
       return studentLocal;
     } else if (currentRole === 'teacher') {
-      const allStudents = (liveStudents && liveStudents.length > 0) ? liveStudents : data.students;
+      const allStudents = (liveStudents && liveStudents.length > 0) ? liveStudents : (data.students || []);
       return list.filter(r => {
+        if (!teacherClasses.length && !teacherPupils.length) return true;
         const student = allStudents.find(
           s => (s.id || '').trim().toLowerCase() === (r.studentId || '').trim().toLowerCase()
         );
-        return student && isStudentInTeacherClasses(student.class, teacherClasses);
+        return student ? isStudentInTeacherClasses(student.class, teacherClasses, teacherPupils, student.id) : true;
       });
     }
     return list;
@@ -119,7 +111,8 @@ export default function ResultsView({ studentOnly = false }: { studentOnly?: boo
     currentRole,
     liveStudents,
     data.students,
-    teacherClasses
+    teacherClasses,
+    teacherPupils
   ]);
 
   const discrepancyCount = useMemo(() => {

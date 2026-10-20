@@ -8,30 +8,63 @@ import { CLASS_OPTIONS } from '../constants';
 import { isStudentInTeacherClasses } from '../lib/classUtils';
 import { computeStudentCASummary, StudentCASummary } from '../lib/caUtils';
 import { AssessmentType } from '../types';
+import {
+  useSchoolResultsSubscription,
+  useStudentsSubscription
+} from '../hooks/useDomainSubscriptions';
 
 interface CAReportCardViewProps {
   initialType?: 'CA1' | 'CA2' | 'Combined';
 }
 
 export default function CAReportCardView({ initialType = 'CA1' }: CAReportCardViewProps) {
-  const { data, config, branding, currentUser, currentRole, updateData } = useStore();
+  const { data, config, branding, currentUser, currentRole, updateData, schoolId } = useStore();
   const showToast = useToastStore(s => s.showToast);
+
+  // Live students and results subscriptions
+  const { students: liveStudents } = useStudentsSubscription(schoolId);
+  const { results: liveSchoolResults } = useSchoolResultsSubscription(schoolId);
+
+  const allStudents = useMemo(() => {
+    return (liveStudents && liveStudents.length > 0) ? liveStudents : (data.students || []);
+  }, [liveStudents, data.students]);
+
+  // Merge results and normalize AFL to CA 1 and CA 2 cleanly
+  const allResults = useMemo(() => {
+    const map = new Map<string, any>();
+    (data.results || []).forEach(r => map.set(String(r.id), r));
+    (liveSchoolResults || []).forEach(r => map.set(String(r.id), r));
+    return Array.from(map.values()).map(r => {
+      const typeStr = String(r.type || '').trim().toUpperCase();
+      const titleStr = String((r as any).examTitle || (r as any).title || '').trim().toUpperCase();
+      if (typeStr === 'AFL' || typeStr === 'CA 1' || typeStr === 'CA1') {
+        return { ...r, type: 'CA 1' };
+      }
+      if (typeStr === 'CA 2' || typeStr === 'CA2' || titleStr.includes('CA 2') || titleStr.includes('CA2')) {
+        return { ...r, type: 'CA 2' };
+      }
+      return r;
+    });
+  }, [data.results, liveSchoolResults]);
 
   const teacher = currentRole === 'teacher'
     ? data.teachers.find(t => (t.id || '').trim().toLowerCase() === (currentUser?.id || '').trim().toLowerCase()) || (currentUser as any)
     : null;
   const teacherClasses = teacher?.classes || [];
+  const teacherPupils = teacher?.pupils || [];
 
   // Allowed students
   const filteredStudents = useMemo(() => {
     if (currentRole === 'student') {
-      return data.students.filter(s => (s.id || '').trim().toLowerCase() === (currentUser?.id || '').trim().toLowerCase());
+      return allStudents.filter(s => (s.id || '').trim().toLowerCase() === (currentUser?.id || '').trim().toLowerCase());
     }
-    if (currentRole === 'teacher' && teacherClasses.length > 0) {
-      return data.students.filter(s => isStudentInTeacherClasses(s.class, teacherClasses));
+    if (currentRole === 'teacher') {
+      if (teacherClasses.length > 0 || (teacherPupils && teacherPupils.length > 0)) {
+        return allStudents.filter(s => isStudentInTeacherClasses(s.class, teacherClasses, teacherPupils, s.id));
+      }
     }
-    return data.students;
-  }, [data.students, currentRole, currentUser, teacherClasses]);
+    return allStudents;
+  }, [allStudents, currentRole, currentUser, teacherClasses, teacherPupils]);
 
   // Selections
   const [activeType, setActiveType] = useState<'CA1' | 'CA2' | 'Combined'>(initialType);
@@ -43,7 +76,7 @@ export default function CAReportCardView({ initialType = 'CA1' }: CAReportCardVi
 
   const studentsInClass = useMemo(() => {
     if (currentRole === 'student') return filteredStudents;
-    return filteredStudents.filter(s => s.class === selectedClass);
+    return filteredStudents.filter(s => isStudentInTeacherClasses(s.class, [selectedClass]));
   }, [filteredStudents, selectedClass, currentRole]);
 
   const [studentId, setStudentId] = useState<string>(
@@ -61,7 +94,9 @@ export default function CAReportCardView({ initialType = 'CA1' }: CAReportCardVi
     }
   }, [studentsInClass, studentId]);
 
-  const currentStudent = data.students.find(s => s.id === studentId);
+  const currentStudent = allStudents.find(
+    s => (s.id || '').trim().toLowerCase() === (studentId || '').trim().toLowerCase()
+  );
 
   // Load remarks for current student & assessment type
   useEffect(() => {
@@ -105,12 +140,12 @@ export default function CAReportCardView({ initialType = 'CA1' }: CAReportCardVi
       currentStudent.id,
       data.subjects,
       data.assessments || [],
-      data.results || [],
+      allResults,
       config,
       session,
       term
     );
-  }, [currentStudent, data.subjects, data.assessments, data.results, config, session, term]);
+  }, [currentStudent, data.subjects, data.assessments, allResults, config, session, term]);
 
   // Auto-save remarks
   const saveRemarks = () => {

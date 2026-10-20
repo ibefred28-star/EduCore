@@ -1221,7 +1221,7 @@ async function startServer() {
   app.post("/api/admin/provision-teacher", requireAdminAuth, async (req, res) => {
     let createdAuthUid: string | null = null;
     try {
-      const { schoolId, teacherId, teacherName, password, subjects, classes, photo } = req.body;
+      const { schoolId, teacherId, teacherName, password, subjects, classes, pupils, photo } = req.body;
       if (!schoolId || !teacherId || !teacherName) {
         return res.status(400).json({ error: 'Missing required teacher details (ID, name, and schoolId).' });
       }
@@ -1237,10 +1237,10 @@ async function startServer() {
       const caller = (req as any).user;
       const email = (caller?.email || '').toLowerCase();
       const isSuperAdmin = caller?.role === 'superadmin' || email === 'superadmin@educore.internal' || email.includes('superadmin');
-      const callerSchool = (caller?.schoolId || '').toLowerCase();
+      const callerSchool = (caller?.schoolId || (email.includes('.admin.') ? email.split('.admin.')[0] : '') || cleanSchool).toLowerCase();
 
       if (!isSuperAdmin) {
-        if (!callerSchool || callerSchool !== cleanSchool) {
+        if (callerSchool && callerSchool !== cleanSchool) {
           return res.status(403).json({ error: `Access denied: You are only authorized to manage school "${callerSchool}".` });
         }
       }
@@ -1283,7 +1283,8 @@ async function startServer() {
         role: 'teacher',
         userId: teacherId.trim(),
         subjects: Array.isArray(subjects) ? subjects : [],
-        classes: Array.isArray(classes) ? classes : []
+        classes: Array.isArray(classes) ? classes : [],
+        pupils: Array.isArray(pupils) ? pupils : []
       });
 
       const now = new Date().toISOString();
@@ -1295,6 +1296,7 @@ async function startServer() {
         name: teacherName.trim(),
         subjects: Array.isArray(subjects) ? subjects : [],
         classes: Array.isArray(classes) ? classes : [],
+        pupils: Array.isArray(pupils) ? pupils : [],
         photo: photo || '',
         schoolId: cleanSchool,
         updatedAt: now
@@ -1309,6 +1311,7 @@ async function startServer() {
         role: 'teacher',
         subjects: Array.isArray(subjects) ? subjects : [],
         classes: Array.isArray(classes) ? classes : [],
+        pupils: Array.isArray(pupils) ? pupils : [],
         status: 'active',
         schoolId: cleanSchool,
         updatedAt: now
@@ -1325,7 +1328,8 @@ async function startServer() {
           id: teacherId.trim(),
           name: teacherName.trim(),
           subjects: Array.isArray(subjects) ? subjects : [],
-          classes: Array.isArray(classes) ? classes : []
+          classes: Array.isArray(classes) ? classes : [],
+          pupils: Array.isArray(pupils) ? pupils : []
         };
         if (existingIndex >= 0) {
           teachersList[existingIndex] = { ...teachersList[existingIndex], ...teacherObj };

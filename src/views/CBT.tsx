@@ -2,7 +2,7 @@ import { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import { useStore } from '../store';
 import { useToastStore } from '../store/toast';
 import { Button, Input } from '../components/ui';
-import { Student, Exam } from '../types';
+import { Student, Exam, AssessmentRecord } from '../types';
 import { useExamsSubscription } from '../hooks/useDomainSubscriptions';
 import {
   startStudentLiveSession,
@@ -13,6 +13,7 @@ import {
 } from '../lib/liveExamService';
 import { AttemptRepository } from '../lib/firestore/repositories/attemptRepository';
 import { ResultRepository } from '../lib/firestore/repositories/resultRepository';
+import { AssessmentRepository, generateAssessmentId } from '../lib/firestore/repositories/assessmentRepository';
 import { FunctionsService } from '../lib/functions/functionsService';
 import { CbtEngine, AttemptLifecycleState } from '../lib/cbt/cbtEngine';
 import { evaluateAttempt, resolveAuthoritativeQuestions } from '../lib/scoringEngine';
@@ -340,24 +341,42 @@ export default function CBT() {
         }
       }
 
-      // 5. Normalize type: if exam was AFL, map to 'CA 1' per institution policy
+      // 5. Normalize type and detect CA1 vs CA2 component
       const examTypeClean = String(exam.type || '').trim().toUpperCase();
-      const normalizedType = examTypeClean === 'AFL' ? 'CA 1' : (exam.type || 'CA 1');
+      const examTitleClean = String(exam.title || '').trim().toUpperCase();
+      let normalizedType = exam.type || 'CA 1';
+      let isCA1 = false;
+      let isCA2 = false;
+
+      if (examTypeClean === 'CA 2' || examTypeClean === 'CA2' || examTitleClean.includes('CA 2') || examTitleClean.includes('CA2') || examTitleClean.includes('TEST 2')) {
+        normalizedType = 'CA 2';
+        isCA2 = true;
+      } else if (examTypeClean === 'EXAMINATION' || examTypeClean.includes('EXAM')) {
+        normalizedType = 'Examination';
+      } else {
+        // Default to CA 1 for AFL, CA 1, Test, Quiz, Assignment
+        normalizedType = 'CA 1';
+        isCA1 = true;
+      }
 
       // Update live proctoring session with final graded score
       completeStudentLiveSession(schoolId, exam.id, currentUser.id, auto, finalScore, finalPct);
+
+      // Scale CA score out of 20 marks
+      const caMarkOutOf20 = Math.min(20, Math.max(0, evaluated.scaledScore > 0 ? evaluated.scaledScore : Math.round((finalPct / 100) * 20)));
 
       // Build official result record with full breakdown
       const localResultRecord = {
         id: serverResult?.id || `res_${exam.id}_${currentUser.id}_${Date.now()}`,
         studentId: currentUser.id,
         examId: exam.id,
+        examTitle: exam.title,
         subject: exam.subject,
         type: normalizedType,
         raw: finalScore,
         rawMax: finalRawMax,
-        scaled: serverResult?.scaled ?? evaluated.scaledScore,
-        max: serverResult?.max ?? evaluated.maxComponentMark,
+        scaled: serverResult?.scaled ?? ((isCA1 || isCA2) ? caMarkOutOf20 : evaluated.scaledScore),
+        max: serverResult?.max ?? ((isCA1 || isCA2) ? 20 : evaluated.maxComponentMark),
         percentage: finalPct,
         grade: finalGrade,
         remark: finalRemark,
@@ -371,7 +390,7 @@ export default function CBT() {
         gradedAt: serverResult?.gradedAt || new Date().toISOString()
       };
 
-      // 6. Record in local store for immediate client dashboard feedback
+      // 6. Record in local store for immediate client dashboard feedback (both results and continuous assessments)
       updateData(draft => {
         const existingIdx = draft.results.findIndex(r => r.id === localResultRecord.id);
         if (existingIdx >= 0) {
@@ -379,13 +398,83 @@ export default function CBT() {
         } else {
           draft.results.push(localResultRecord as any);
         }
+
+        if (isCA1 || isCA2) {
+          if (!draft.assessments) draft.assessments = [];
+          const session = '2026/2027';
+          const term = 'First Term';
+          const aType = isCA2 ? 'CA2' : 'CA1';
+          const aId = generateAssessmentId(currentUser.id, exam.subject, aType, session, term);
+          const assessmentRecord: AssessmentRecord = {
+            id: aId,
+            schoolId: schoolId || 'demo',
+            studentId: currentUser.id,
+            studentUid: currentUser.uid,
+            studentName: currentUser.name,
+            classId: (currentUser as any).class || 'Primary 5',
+            subjectId: exam.subject,
+            academicSessionId: session,
+            termId: term,
+            assessmentType: aType,
+            score: caMarkOutOf20,
+            maximumScore: 20,
+            status: 'submitted',
+            enteredBy: {
+              uid: currentUser.uid,
+              id: currentUser.id,
+              name: currentUser.name,
+              role: 'student'
+            },
+            enteredAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString()
+          };
+
+          const existingAssIdx = draft.assessments.findIndex(a => a.id === aId);
+          if (existingAssIdx >= 0) {
+            draft.assessments[existingAssIdx] = assessmentRecord;
+          } else {
+            draft.assessments.push(assessmentRecord);
+          }
+        }
       });
 
-      // 7. Persist to Firestore results collection
+      // 7. Persist to Firestore results and continuous assessment collections
       if (schoolId) {
         await ResultRepository.recordGradedResult(schoolId, localResultRecord as any).catch(err => {
           console.warn('Could not persist result to Firestore:', err);
         });
+
+        if (isCA1 || isCA2) {
+          const session = '2026/2027';
+          const term = 'First Term';
+          const aType = isCA2 ? 'CA2' : 'CA1';
+          const aId = generateAssessmentId(currentUser.id, exam.subject, aType, session, term);
+          await AssessmentRepository.saveAssessment(schoolId, {
+            id: aId,
+            schoolId: schoolId || 'demo',
+            studentId: currentUser.id,
+            studentUid: currentUser.uid,
+            studentName: currentUser.name,
+            classId: (currentUser as any).class || 'Primary 5',
+            subjectId: exam.subject,
+            academicSessionId: session,
+            termId: term,
+            assessmentType: aType,
+            score: caMarkOutOf20,
+            maximumScore: 20,
+            status: 'submitted',
+            enteredBy: {
+              uid: currentUser.uid,
+              id: currentUser.id,
+              name: currentUser.name,
+              role: 'student'
+            },
+            enteredAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString()
+          }).catch(err => {
+            console.warn('Could not persist assessment record to Firestore:', err);
+          });
+        }
       }
 
       // 8. Celebratory confetti animation ONLY on pass and score > 0! Never fire on 0 score.

@@ -137,10 +137,12 @@ export function calculateResultStats(results: GamifiedResultItem[]): {
       ? r.rawMax
       : (Array.isArray(r.breakdown) && r.breakdown.length > 0 ? r.breakdown.length : raw);
 
-    // Fallback: if breakdown didn't have correct items but percentage or raw is positive
+    // Fallback: if breakdown didn't have correct items but percentage, raw, or scaled is positive
     let resolvedCorrect = Math.max(breakdownCorrect, raw);
     if (resolvedCorrect === 0 && pct > 0 && rawMax > 0) {
       resolvedCorrect = Math.round((pct / 100) * rawMax);
+    } else if (resolvedCorrect === 0 && typeof (r as any).scaled === 'number' && (r as any).scaled > 0 && typeof (r as any).max === 'number' && (r as any).max > 0) {
+      resolvedCorrect = Math.round(((r as any).scaled / (r as any).max) * (rawMax || 10));
     }
 
     correctAnswersCount += resolvedCorrect;
@@ -149,7 +151,8 @@ export function calculateResultStats(results: GamifiedResultItem[]): {
     }
   });
 
-  const examXP = correctAnswersCount * XP_PER_CORRECT_ANSWER;
+  // Base exam participation award (+10 XP per test taken) plus +2 XP per correct answer
+  const examXP = (results.length * 10) + (correctAnswersCount * XP_PER_CORRECT_ANSWER);
 
   return {
     correctAnswersCount,
@@ -503,9 +506,10 @@ export function buildLeaderboard(
 
   const entries: LeaderboardEntry[] = targetStudents.map(student => {
     const studentIdNorm = (student.id || '').trim().toLowerCase();
-    const studentResults = results.filter(
-      r => (r.studentId || '').trim().toLowerCase() === studentIdNorm
-    );
+    const studentResults = results.filter(r => {
+      const rId = String(r.studentId || (r as any).student?.id || (r as any).candidateId || (r as any).uid || '').trim().toLowerCase();
+      return rId === studentIdNorm;
+    });
     const xpStats = calculateStudentTotalXP(student.id, studentResults);
     const levelInfo = getStudentLevel(xpStats.totalXP);
     const badges = evaluateBadges(student.id, studentResults);

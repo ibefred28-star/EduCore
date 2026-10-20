@@ -81,8 +81,7 @@ export const ResultRepository = {
     const colRef = collection(db, FirestorePaths.results(schoolId));
     const q = query(
       colRef,
-      where('studentId', '==', studentId),
-      orderBy('submittedAt', 'desc')
+      where('studentId', '==', studentId)
     );
 
     return onSnapshot(q, (snapshot) => {
@@ -91,5 +90,41 @@ export const ResultRepository = {
     }, (error) => {
       console.warn('ResultRepository.subscribeStudentResults error:', error);
     });
+  },
+
+  /**
+   * Realtime subscription for all school results across all students
+   */
+  subscribeSchoolResults(
+    schoolId: string,
+    callback: (results: FirestoreResultDoc[]) => void
+  ): Unsubscribe {
+    if (!schoolId) return () => {};
+    const colRef = collection(db, FirestorePaths.results(schoolId));
+    return onSnapshot(colRef, (snapshot) => {
+      const list = snapshot.docs.map(d => d.data() as FirestoreResultDoc);
+      callback(list);
+    }, (error) => {
+      console.warn('ResultRepository.subscribeSchoolResults error:', error);
+    });
+  },
+
+  /**
+   * Migrates any legacy AFL results to CA 1 in Firestore
+   */
+  async migrateAflResultsToCA1(schoolId: string): Promise<void> {
+    if (!schoolId) return;
+    try {
+      const colRef = collection(db, FirestorePaths.results(schoolId));
+      const snap = await getDocs(colRef);
+      for (const d of snap.docs) {
+        const data = d.data();
+        if (String(data.type || '').trim().toUpperCase() === 'AFL') {
+          await setDoc(d.ref, { type: 'CA 1' }, { merge: true });
+        }
+      }
+    } catch (e) {
+      console.warn('Could not migrate AFL results to CA 1 in Firestore:', e);
+    }
   }
 };

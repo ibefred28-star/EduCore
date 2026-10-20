@@ -15,32 +15,47 @@ export default function MyExams() {
   // Real-time Firestore subscription for exams
   const { exams: liveExams, loading: examsLoading } = useExamsSubscription(schoolId, studentClass);
   // Real-time Firestore subscription for student's official results
-  const { results: liveResults } = useStudentResultsSubscription(schoolId, currentUser?.id);
+  const {
+    results: liveResults,
+    rawResults,
+    loading: resultsLoading
+  } = useStudentResultsSubscription(schoolId, currentUser?.id);
 
   // Fallback to store data if offline or before Firestore populates
   const effectiveResults = useMemo(() => {
-    if (liveResults !== null && liveResults !== undefined) {
+    const studentLocal = (data.results || []).filter(
+      r => (r.studentId || '').trim().toLowerCase() === (currentUser?.id || '').trim().toLowerCase()
+    );
+    if (!resultsLoading && rawResults !== null && liveResults && liveResults.length > 0) {
       return liveResults;
     }
-    return (data.results || []).filter(r => r.studentId === currentUser?.id);
-  }, [liveResults, data.results, currentUser?.id]);
+    return studentLocal;
+  }, [liveResults, rawResults, resultsLoading, data.results, currentUser?.id]);
 
-  // Prune deleted results from local store if teacher deleted them in Firestore
+  // Prune deleted results from local store only if teacher definitely deleted them in Firestore
   useEffect(() => {
-    if (currentUser?.id && liveResults !== null && liveResults !== undefined) {
+    if (
+      currentUser?.id &&
+      !resultsLoading &&
+      rawResults !== null &&
+      Array.isArray(liveResults) &&
+      liveResults.length > 0
+    ) {
       const liveIds = new Set(liveResults.map(r => String(r.id)));
       const hasOrphan = data.results.some(
-        r => r.studentId === currentUser.id && !liveIds.has(String(r.id))
+        r => (r.studentId || '').trim().toLowerCase() === (currentUser.id || '').trim().toLowerCase() &&
+             !liveIds.has(String(r.id))
       );
       if (hasOrphan) {
         updateData(draft => {
           draft.results = draft.results.filter(
-            r => r.studentId !== currentUser.id || liveIds.has(String(r.id))
+            r => (r.studentId || '').trim().toLowerCase() !== (currentUser.id || '').trim().toLowerCase() ||
+                 liveIds.has(String(r.id))
           );
         });
       }
     }
-  }, [currentUser?.id, liveResults, data.results, updateData]);
+  }, [currentUser?.id, resultsLoading, rawResults, liveResults, data.results, updateData]);
 
   // Merge local and live exams by ID to ensure all created active exams are displayed
   const effectiveExams = useMemo(() => {

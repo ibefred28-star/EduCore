@@ -45,7 +45,10 @@ export default function GamificationHUD() {
   const { students: liveStudents } = useStudentsSubscription(schoolId);
 
   const targetStudents = useMemo(() => {
-    return (liveStudents && liveStudents.length > 0) ? liveStudents : (data.students || []);
+    const map = new Map<string, any>();
+    (data.students || []).forEach(s => map.set((s.id || '').trim().toLowerCase(), s));
+    (liveStudents || []).forEach(s => map.set((s.id || '').trim().toLowerCase(), s));
+    return Array.from(map.values());
   }, [liveStudents, data.students]);
 
   // Overall effective results for school (merging store and live results)
@@ -55,7 +58,8 @@ export default function GamificationHUD() {
     (liveSchoolResults || []).forEach(r => map.set(String(r.id), r));
     (liveStudentResults || []).forEach(r => map.set(String(r.id), r));
     return Array.from(map.values()).map(r => {
-      if (String(r.type || '').trim().toUpperCase() === 'AFL') {
+      const typeStr = String(r.type || '').trim().toUpperCase();
+      if (typeStr === 'AFL' || typeStr === 'CA 1' || typeStr === 'CA1') {
         return { ...r, type: 'CA 1' };
       }
       return r;

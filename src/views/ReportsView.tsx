@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useMemo } from 'react';
 import { useStore } from '../store';
 import { useToastStore } from '../store/toast';
 import { Button, Card, Input, Label, Select, Modal, Textarea } from '../components/ui';
@@ -10,6 +10,10 @@ import { isStudentInTeacherClasses } from '../lib/classUtils';
 import { computeStudentCASummary } from '../lib/caUtils';
 import { calculateGradeAndRemark } from '../lib/scoringEngine';
 import CAReportCardView from './CAReportCardView';
+import {
+  useSchoolResultsSubscription,
+  useStudentsSubscription
+} from '../hooks/useDomainSubscriptions';
 
 ChartJS.register(CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend);
 
@@ -18,8 +22,32 @@ interface ReportsViewProps {
 }
 
 export default function ReportsView({ initialCategory = 'academic' }: ReportsViewProps) {
-  const { data, config, branding, currentUser, currentRole, updateData } = useStore();
+  const { data, config, branding, currentUser, currentRole, updateData, schoolId } = useStore();
   const showToast = useToastStore(s => s.showToast);
+
+  // Live students and results subscriptions
+  const { students: liveStudents } = useStudentsSubscription(schoolId);
+  const { results: liveSchoolResults } = useSchoolResultsSubscription(schoolId);
+
+  const allStudents = useMemo(() => {
+    const map = new Map<string, any>();
+    (data.students || []).forEach(s => map.set((s.id || '').trim().toLowerCase(), s));
+    (liveStudents || []).forEach(s => map.set((s.id || '').trim().toLowerCase(), s));
+    return Array.from(map.values());
+  }, [data.students, liveStudents]);
+
+  const allResults = useMemo(() => {
+    const map = new Map<string, any>();
+    (data.results || []).forEach(r => map.set(String(r.id), r));
+    (liveSchoolResults || []).forEach(r => map.set(String(r.id), r));
+    return Array.from(map.values()).map(r => {
+      const typeStr = String(r.type || '').trim().toUpperCase();
+      if (typeStr === 'AFL' || typeStr === 'CA 1' || typeStr === 'CA1') {
+        return { ...r, type: 'CA 1' };
+      }
+      return r;
+    });
+  }, [data.results, liveSchoolResults]);
 
   const [activeCategory, setActiveCategory] = useState<'academic' | 'ca1' | 'ca2' | 'caCombined' | 'afl'>(initialCategory);
 
@@ -33,10 +61,11 @@ export default function ReportsView({ initialCategory = 'academic' }: ReportsVie
     ? data.teachers.find(t => (t.id || '').trim().toLowerCase() === (currentUser?.id || '').trim().toLowerCase()) || (currentUser as any)
     : null;
   const teacherClasses = teacher?.classes || [];
+  const teacherPupils = teacher?.pupils || [];
 
   const students = currentRole === 'teacher' 
-    ? data.students.filter(s => isStudentInTeacherClasses(s.class, teacherClasses))
-    : data.students;
+    ? allStudents.filter(s => isStudentInTeacherClasses(s.class, teacherClasses, teacherPupils, s.id))
+    : allStudents;
   
   const [studentId, setStudentId] = useState(students[0]?.id || '');
   const [isReportOpen, setIsReportOpen] = useState(false);
@@ -54,11 +83,11 @@ export default function ReportsView({ initialCategory = 'academic' }: ReportsVie
   }, [students, studentId]);
 
   const generateReport = (kind: 'academic' | 'afl' | 'ca1' | 'ca2' | 'caCombined') => {
-    const s = data.students.find(x => x.id === studentId);
+    const s = allStudents.find(x => (x.id || '').trim().toLowerCase() === (studentId || '').trim().toLowerCase());
     if (!s) return;
     
     setReportKind(kind);
-    const att = data.attendance.find(a => a.studentId === studentId) || { days: 0, present: 0, absent: 0, percent: 0 };
+    const att = data.attendance.find(a => (a.studentId || '').trim().toLowerCase() === (studentId || '').trim().toLowerCase()) || { days: 0, present: 0, absent: 0, percent: 0 };
     const initialDays = Number(att.days) || 0;
     const initialPresent = Number(att.present) || 0;
     const initialAbsent = Math.max(0, initialDays - initialPresent);
@@ -115,7 +144,7 @@ export default function ReportsView({ initialCategory = 'academic' }: ReportsVie
 
   const saveReportDetails = (silent = false) => {
     updateData(draft => {
-      const s = draft.students.find(x => x.id === studentId);
+      const s = draft.students.find(x => (x.id || '').trim().toLowerCase() === (studentId || '').trim().toLowerCase());
       if (s) {
         s.reportTerm = reportForm.term;
         s.reportSession = reportForm.session;
@@ -135,7 +164,7 @@ export default function ReportsView({ initialCategory = 'academic' }: ReportsVie
         return;
       }
       
-      draft.attendance = draft.attendance.filter(a => a.studentId !== studentId);
+      draft.attendance = draft.attendance.filter(a => (a.studentId || '').trim().toLowerCase() !== (studentId || '').trim().toLowerCase());
       draft.attendance.push({
         studentId,
         days,
@@ -229,19 +258,24 @@ export default function ReportsView({ initialCategory = 'academic' }: ReportsVie
     }
   };
 
-  const s = data.students.find(x => x.id === studentId);
+  const s = allStudents.find(x => (x.id || '').trim().toLowerCase() === (studentId || '').trim().toLowerCase());
   
   const renderAcademicReport = () => {
     if (!s) return null;
 
-    const studentAssessments = (data.assessments || []).filter(a => a.studentId === studentId);
-    const studentResults = data.results.filter(r => r.studentId === studentId);
+    const studentIdNorm = (studentId || '').trim().toLowerCase();
+    const studentAssessments = (data.assessments || []).filter(
+      a => (a.studentId || '').trim().toLowerCase() === studentIdNorm
+    );
+    const studentResults = allResults.filter(
+      r => (r.studentId || '').trim().toLowerCase() === studentIdNorm
+    );
 
     // Build unique subjects list
     const subjectsSet = new Set<string>();
     studentAssessments.forEach(a => { if (a.subjectId) subjectsSet.add(a.subjectId); });
     studentResults.forEach(r => {
-      if (['CA 1', 'CA 2', 'Examination'].includes(r.type) && r.subject) subjectsSet.add(r.subject);
+      if (['CA 1', 'CA 2', 'Examination', 'AFL', 'Test', 'Quiz', 'Assignment'].includes(r.type) && r.subject) subjectsSet.add(r.subject);
     });
     if (subjectsSet.size === 0) {
       (data.subjects || []).forEach(sub => subjectsSet.add(sub));
@@ -252,7 +286,7 @@ export default function ReportsView({ initialCategory = 'academic' }: ReportsVie
       studentId,
       allSubjects,
       data.assessments || [],
-      data.results || [],
+      allResults,
       config,
       reportForm.session || '2026/2027',
       reportForm.term || 'First Term'
@@ -610,7 +644,11 @@ export default function ReportsView({ initialCategory = 'academic' }: ReportsVie
 
   const renderAflReport = () => {
     if (!s) return null;
-    const afl = data.results.filter(r => r.studentId === studentId && (r.type === 'AFL' || ['Test', 'Quiz', 'Assignment', 'Mock', 'Other'].includes(r.type)));
+    const studentIdNorm = (studentId || '').trim().toLowerCase();
+    const afl = allResults.filter(
+      r => (r.studentId || '').trim().toLowerCase() === studentIdNorm &&
+           (r.type === 'AFL' || r.type === 'CA 1' || ['Test', 'Quiz', 'Assignment', 'Mock', 'Other'].includes(r.type))
+    );
     
     const getPct = (r: any) => r.rawMax > 0 ? Math.round((r.raw / r.rawMax) * 100) : 0;
     const getScore10 = (r: any) => r.rawMax > 0 ? Math.round((r.raw / r.rawMax) * 100) / 10 : 0;
