@@ -165,13 +165,13 @@ export default function AdminStudents() {
     };
 
     if (!editingId) {
-      if (data.students.some(s => s.id.toLowerCase() === cleanStudent.id.toLowerCase())) {
+      if ((data.students || []).some(s => (s?.id || '').trim().toLowerCase() === cleanStudent.id.toLowerCase())) {
         return showToast(`Student ID "${cleanStudent.id}" already exists`);
       }
-      if (data.teachers.some(t => t.id.toLowerCase() === cleanStudent.id.toLowerCase())) {
+      if ((data.teachers || []).some(t => (t?.id || '').trim().toLowerCase() === cleanStudent.id.toLowerCase())) {
         return showToast(`ID "${cleanStudent.id}" is already used by a Teacher`);
       }
-      if (data.admins.some(a => a.id.toLowerCase() === cleanStudent.id.toLowerCase())) {
+      if ((data.admins || []).some(a => (a?.id || '').trim().toLowerCase() === cleanStudent.id.toLowerCase())) {
         return showToast(`ID "${cleanStudent.id}" is already used by an Administrator`);
       }
     }

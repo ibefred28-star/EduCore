@@ -130,6 +130,8 @@ export interface Result {
   attempt: number;
   attemptsAllowed: number;
   submittedAt: string;
+  isManualOverride?: boolean;
+  isDeleted?: boolean;
 }
 
 export interface Attendance {
@@ -140,7 +142,7 @@ export interface Attendance {
   percent: number;
 }
 
-export type AssessmentType = 'CA1' | 'CA2';
+export type AssessmentType = 'CA1' | 'CA2' | 'Exam' | 'Examination';
 export type AssessmentStatus = 'draft' | 'submitted' | 'locked';
 
 export interface AssessmentRecord {
@@ -154,9 +156,12 @@ export interface AssessmentRecord {
   academicSessionId: string;
   termId: string;
   assessmentType: AssessmentType;
-  score: number; // 0 to 20
-  maximumScore: number; // 20
+  score: number; // 0 to 20 (or up to maximumScore)
+  maximumScore?: number; // 20 or exam max (e.g. 60)
+  maxScore?: number;
   status: AssessmentStatus;
+  isManualOverride?: boolean;
+  notes?: string;
   enteredBy: {
     uid?: string;
     id?: string;
@@ -164,7 +169,7 @@ export interface AssessmentRecord {
     email?: string;
     role: string;
   };
-  enteredAt: string;
+  enteredAt?: string;
   updatedBy?: {
     uid?: string;
     id?: string;

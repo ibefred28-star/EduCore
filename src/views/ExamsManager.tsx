@@ -4,6 +4,9 @@ import { useToastStore } from '../store/toast';
 import { Button, Input, Label, Modal, Select, Textarea } from '../components/ui';
 import { Exam, Question, BankQuestion, QuestionType, QuestionDifficulty } from '../types';
 import { ExamRepository } from '../lib/firestore/repositories/examRepository';
+import { ResultRepository } from '../lib/firestore/repositories/resultRepository';
+import { AssessmentRepository, generateAssessmentId } from '../lib/firestore/repositories/assessmentRepository';
+import { matchSubject } from '../lib/caUtils';
 import {
   bankQuestionToExamQuestion,
   generateRandomExamQuestions
@@ -253,16 +256,49 @@ export default function ExamsManager() {
     setDeleteConfirm(id);
   };
 
-  const confirmDelete = () => {
+  const confirmDelete = async () => {
     if (deleteConfirm) {
+      const examIdToDelete = deleteConfirm;
+      const examObj = data.exams.find(x => x.id === examIdToDelete);
+      const subjectName = examObj?.subject;
+      const examType = examObj?.type;
+
+      // Track deleted result IDs in localStorage
       if (schoolId) {
-        ExamRepository.deleteExam(schoolId, deleteConfirm).catch(console.warn);
+        try {
+          const delKey = `educore_deleted_results_${schoolId}`;
+          const current = JSON.parse(localStorage.getItem(delKey) || '[]');
+          const examResults = data.results.filter(r => String(r.examId) === String(examIdToDelete));
+          examResults.forEach(r => {
+            if (!current.includes(String(r.id))) current.push(String(r.id));
+          });
+          localStorage.setItem(delKey, JSON.stringify(current));
+        } catch (e) {}
       }
+
+      if (schoolId) {
+        ExamRepository.deleteExam(schoolId, examIdToDelete).catch(console.warn);
+        // Also delete results of this exam from Firestore
+        const resultsToDelete = (data.results || []).filter(r => String(r.examId) === String(examIdToDelete));
+        resultsToDelete.forEach(r => {
+          ResultRepository.deleteResult(schoolId, r.id).catch(console.warn);
+          if (r.studentId && subjectName) {
+            const aType = String(examType || '').toUpperCase().includes('CA 2') ? 'CA2' : 'CA1';
+            const aId = generateAssessmentId(r.studentId, subjectName, aType, '2026/2027', 'First Term');
+            AssessmentRepository.deleteAssessment(schoolId, aId).catch(console.warn);
+          }
+        });
+      }
+
       updateData(draft => {
-        draft.exams = draft.exams.filter(x => x.id !== deleteConfirm);
-        draft.results = draft.results.filter(x => x.examId !== deleteConfirm);
+        draft.exams = (draft.exams || []).filter(x => x.id !== examIdToDelete);
+        draft.results = (draft.results || []).filter(x => String(x.examId) !== String(examIdToDelete));
+        if (subjectName && draft.assessments) {
+          draft.assessments = draft.assessments.filter(a => !matchSubject(a.subjectId, subjectName));
+        }
       });
-      showToast('Exam deleted');
+
+      showToast('Exam and associated results removed from all dashboards and report cards');
       setDeleteConfirm(null);
     }
   };

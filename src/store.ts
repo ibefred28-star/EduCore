@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { AppData, AssessmentRecord, Branding, Config, Role, SyncConfig, Tenant, User } from './types';
+import { AppData, AssessmentRecord, Branding, Config, Result, Role, SyncConfig, Tenant, User } from './types';
 import { DEFAULT_BRANDING, DEFAULT_CONFIG, DEFAULT_DATA, EMPTY_SCHOOL_DATA } from './constants';
 import { db } from './firebase';
 import { doc, onSnapshot, setDoc, getDoc, runTransaction, deleteDoc } from 'firebase/firestore';
@@ -76,6 +76,7 @@ interface StoreState {
   updateData: (updater: (draft: AppData) => AppData | void) => void;
   saveAssessment: (record: AssessmentRecord) => Promise<void>;
   saveBatchAssessments: (records: AssessmentRecord[]) => Promise<void>;
+  deleteAssessment: (assessmentId: string) => Promise<void>;
   updateBranding: (branding: Branding) => void;
   updateConfig: (config: Config) => void;
   updateSyncConfig: (syncConfig: SyncConfig | null) => void;
@@ -220,11 +221,12 @@ export const useStore = create<StoreState>((set, get) => {
           photo: existingStudent?.photo || ''
         };
       } else if (role === 'teacher') {
-        const existingTeacher = data.teachers?.find(t => t.id.toLowerCase() === authenticatedUser.userId.toLowerCase());
+        const existingTeacher = data.teachers?.find(t => (t.id || '').trim().toLowerCase() === authenticatedUser.userId.trim().toLowerCase());
         enrichedUser = {
           ...enrichedUser,
           classes: existingTeacher?.classes || authenticatedUser.classes || ['Primary 5'],
-          subjects: existingTeacher?.subjects || ['Math']
+          subjects: existingTeacher?.subjects || (authenticatedUser as any).subjects || ['Math'],
+          pupils: existingTeacher?.pupils || (authenticatedUser as any).pupils || []
         };
       }
 
@@ -315,6 +317,35 @@ export const useStore = create<StoreState>((set, get) => {
 
     saveAssessment: async (record: AssessmentRecord) => {
       await get().saveBatchAssessments([record]);
+    },
+
+    deleteAssessment: async (assessmentId: string) => {
+      const state = get();
+      if (!state.schoolId || !assessmentId) return;
+
+      // Track in deleted IDs
+      try {
+        const delKey = `educore_deleted_assessments_${state.schoolId}`;
+        const delArr = safeParse<string[]>(delKey, []);
+        if (!delArr.includes(assessmentId)) {
+          delArr.push(assessmentId);
+          localStorage.setItem(delKey, JSON.stringify(delArr));
+        }
+      } catch (e) {}
+
+      // 1. Remove from local store & localStorage
+      get().updateData((draft) => {
+        if (draft.assessments) {
+          draft.assessments = draft.assessments.filter(a => a.id !== assessmentId);
+        }
+      });
+
+      // 2. Delete from Firestore collection
+      try {
+        await AssessmentRepository.deleteAssessment(state.schoolId, assessmentId);
+      } catch (err) {
+        console.warn('Deleting assessment from Firestore notice:', err);
+      }
     },
 
     updateData: (updater) => {
@@ -544,20 +575,20 @@ export const useStore = create<StoreState>((set, get) => {
         // Realtime sync from dedicated assessments subcollection
         try {
           const unsubAssessments = AssessmentRepository.subscribeAssessments(state.schoolId, (records) => {
-            if (records && records.length > 0) {
-              set(curr => {
-                const existing = curr.data.assessments || [];
-                const map = new Map<string, AssessmentRecord>();
-                existing.forEach(a => map.set(a.id, a));
-                records.forEach(r => map.set(r.id, r));
-                const merged = Array.from(map.values());
-                const updatedData = { ...curr.data, assessments: merged };
-                if (curr.schoolId) {
-                  localStorage.setItem(`educore_data_${curr.schoolId}`, JSON.stringify(updatedData));
-                }
-                return { data: updatedData };
-              });
-            }
+            const delKey = `educore_deleted_assessments_${state.schoolId}`;
+            const delSet = new Set(safeParse<string[]>(delKey, []));
+
+            set(curr => {
+              const liveFiltered = (records || []).filter(r => !delSet.has(r.id));
+              // Allow local draft/uncommitted assessments that are not in deleted set
+              const localUnsaved = (curr.data.assessments || []).filter(a => !delSet.has(a.id) && !liveFiltered.some(lr => lr.id === a.id));
+              const merged = [...liveFiltered, ...localUnsaved];
+              const updatedData = { ...curr.data, assessments: merged };
+              if (curr.schoolId) {
+                localStorage.setItem(`educore_data_${curr.schoolId}`, JSON.stringify(updatedData));
+              }
+              return { data: updatedData };
+            });
           });
           set({ unsubscribeAssessments: unsubAssessments });
         } catch (e) {
@@ -567,23 +598,27 @@ export const useStore = create<StoreState>((set, get) => {
         // Realtime sync from dedicated results subcollection
         try {
           const unsubResults = ResultRepository.subscribeSchoolResults(state.schoolId, (records) => {
-            if (records && records.length > 0) {
-              set(curr => {
-                const existing = curr.data.results || [];
-                const map = new Map<string, any>();
-                existing.forEach(r => map.set(String(r.id), r));
-                records.forEach(r => {
-                  const normType = String(r.type || '').trim().toUpperCase() === 'AFL' ? 'CA 1' : r.type;
-                  map.set(String(r.id), { ...r, type: normType });
-                });
-                const merged = Array.from(map.values());
-                const updatedData = { ...curr.data, results: merged };
-                if (curr.schoolId) {
-                  localStorage.setItem(`educore_data_${curr.schoolId}`, JSON.stringify(updatedData));
-                }
-                return { data: updatedData };
+            const delKey = `educore_deleted_results_${state.schoolId}`;
+            const delSet = new Set(safeParse<string[]>(delKey, []));
+
+            set(curr => {
+              const liveFiltered: Result[] = (records || []).filter(r => !delSet.has(String(r.id)) && !(r as any).isDeleted).map(r => {
+                const normType = String(r.type || '').trim().toUpperCase() === 'AFL' ? 'CA 1' : r.type;
+                return {
+                  ...r,
+                  type: normType,
+                  answers: (r as any).answers || []
+                } as unknown as Result;
               });
-            }
+              // Keep only local results that are not deleted and not in liveFiltered
+              const localUnsaved = (curr.data.results || []).filter(r => !delSet.has(String(r.id)) && !r.isDeleted && !liveFiltered.some(lr => String(lr.id) === String(r.id)));
+              const merged: Result[] = [...liveFiltered, ...localUnsaved];
+              const updatedData = { ...curr.data, results: merged };
+              if (curr.schoolId) {
+                localStorage.setItem(`educore_data_${curr.schoolId}`, JSON.stringify(updatedData));
+              }
+              return { data: updatedData };
+            });
           });
           set({ unsubscribeResults: unsubResults });
 
@@ -725,9 +760,10 @@ AuthService.initAuthObserver(async (authUser) => {
       enrichedUser.class = s?.class || 'Primary 5';
       enrichedUser.photo = s?.photo || '';
     } else if (role === 'teacher') {
-      const t = data.teachers?.find(x => x.id.toLowerCase() === authUser.userId.toLowerCase());
+      const t = data.teachers?.find(x => (x.id || '').trim().toLowerCase() === authUser.userId.trim().toLowerCase());
       enrichedUser.classes = t?.classes || ['Primary 5'];
       enrichedUser.subjects = t?.subjects || ['Math'];
+      enrichedUser.pupils = t?.pupils || [];
     }
 
     useStore.setState({

@@ -4,6 +4,7 @@ import {
   getDoc,
   getDocs,
   setDoc,
+  deleteDoc,
   writeBatch,
   query,
   where,
@@ -146,6 +147,19 @@ export const AssessmentRepository = {
     if (!schoolId || !record.id) throw new Error('Missing schoolId or assessment record id');
     const docRef = doc(db, FirestorePaths.assessmentDoc(schoolId, record.id));
     await setDoc(docRef, record, { merge: true });
+  },
+
+  /**
+   * Deletes a continuous assessment record from Firestore
+   */
+  async deleteAssessment(schoolId: string, assessmentId: string): Promise<void> {
+    if (!schoolId || !assessmentId) return;
+    try {
+      const docRef = doc(db, FirestorePaths.assessmentDoc(schoolId, assessmentId));
+      await deleteDoc(docRef);
+    } catch (err) {
+      console.warn('Error deleting assessment from Firestore:', err);
+    }
   },
 
   /**

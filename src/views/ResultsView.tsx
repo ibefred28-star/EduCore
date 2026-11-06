@@ -5,6 +5,8 @@ import { Button, Modal, Textarea, Input } from '../components/ui';
 import { isStudentInTeacherClasses } from '../lib/classUtils';
 import { FunctionsService } from '../lib/functions/functionsService';
 import { ResultRepository } from '../lib/firestore/repositories/resultRepository';
+import { AssessmentRepository, generateAssessmentId } from '../lib/firestore/repositories/assessmentRepository';
+import { matchSubject } from '../lib/caUtils';
 import {
   useStudentResultsSubscription,
   useSchoolResultsSubscription,
@@ -449,19 +451,51 @@ export default function ResultsView({ studentOnly = false }: { studentOnly?: boo
     const targetId = String(resultToDelete.id);
     const student = data.students.find(s => s.id === resultToDelete.studentId);
     const studentName = student ? student.name : resultToDelete.studentId;
+    const targetSubject = resultToDelete.subject;
+    const targetType = resultToDelete.type;
 
     try {
-      // 1. Update local and shared application store
+      // Track deleted result ID in localStorage
+      if (schoolId) {
+        try {
+          const delKey = `educore_deleted_results_${schoolId}`;
+          const current = JSON.parse(localStorage.getItem(delKey) || '[]');
+          if (!current.includes(targetId)) {
+            current.push(targetId);
+            localStorage.setItem(delKey, JSON.stringify(current));
+          }
+        } catch (e) {}
+      }
+
+      // 1. Update local and shared application store (remove result and any matching assessment)
       updateData(draft => {
-        draft.results = draft.results.filter(x => String(x.id) !== targetId);
+        draft.results = (draft.results || []).filter(x => String(x.id) !== targetId);
+        if (draft.assessments) {
+          draft.assessments = draft.assessments.filter(a => {
+            if ((a.studentId || '').trim().toLowerCase() === (resultToDelete.studentId || '').trim().toLowerCase()) {
+              if (matchSubject(a.subjectId, targetSubject)) {
+                // If the assessment matches the result's type, remove it
+                const normA = (a.assessmentType || '').toUpperCase();
+                const normR = String(targetType || '').toUpperCase();
+                if ((normR.includes('CA 1') || normR.includes('AFL') || normR.includes('CA1')) && normA.includes('CA1')) return false;
+                if ((normR.includes('CA 2') || normR.includes('CA2')) && normA.includes('CA2')) return false;
+              }
+            }
+            return true;
+          });
+        }
       });
 
       // 2. Delete from dedicated Firestore results collection
       if (schoolId) {
         await ResultRepository.deleteResult(schoolId, targetId);
+        // Also remove matching continuous assessment document if present
+        const aType = String(targetType || '').toUpperCase().includes('CA 2') ? 'CA2' : 'CA1';
+        const aId = generateAssessmentId(resultToDelete.studentId, targetSubject, aType, '2026/2027', 'First Term');
+        await AssessmentRepository.deleteAssessment(schoolId, aId).catch(console.warn);
       }
 
-      showToast(`Result for ${studentName} deleted successfully. It has been removed from the student's dashboard.`);
+      showToast(`Result for ${studentName} deleted successfully. It will no longer appear on dashboards or report cards.`);
       setResultToDelete(null);
     } catch (err: any) {
       console.warn('Error deleting result:', err);

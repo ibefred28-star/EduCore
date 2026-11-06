@@ -4,6 +4,7 @@ import { useToastStore } from '../store/toast';
 import { Button, Input, Label, Modal } from '../components/ui';
 import { CLASS_OPTIONS } from '../constants';
 import { AdminProvisioningService } from '../lib/auth/adminProvisioningService';
+import { TeacherRepository } from '../lib/firestore/repositories/teacherRepository';
 import { Search, Check, Users, BookOpen, Layers } from 'lucide-react';
 
 export default function AdminTeachers() {
@@ -114,8 +115,8 @@ export default function AdminTeachers() {
   };
 
   const saveTeacher = async () => {
-    const trimmedId = formData.id.trim();
-    const trimmedName = formData.name.trim();
+    const trimmedId = (formData.id || '').trim();
+    const trimmedName = (formData.name || '').trim();
     if (!trimmedId || !trimmedName) return showToast('Teacher ID and Name are required');
     
     let finalClasses = [...formData.classes];
@@ -124,18 +125,18 @@ export default function AdminTeachers() {
     }
 
     if (!editingId) {
-      if (data.teachers.some(t => t.id.toLowerCase() === trimmedId.toLowerCase())) {
+      if ((data.teachers || []).some(t => (t?.id || '').trim().toLowerCase() === trimmedId.toLowerCase())) {
         return showToast(`Teacher ID "${trimmedId}" already exists`);
       }
-      if (data.students.some(s => s.id.toLowerCase() === trimmedId.toLowerCase())) {
+      if ((data.students || []).some(s => (s?.id || '').trim().toLowerCase() === trimmedId.toLowerCase())) {
         return showToast(`ID "${trimmedId}" is already used by a Student`);
       }
-      if (data.admins.some(a => a.id.toLowerCase() === trimmedId.toLowerCase())) {
+      if ((data.admins || []).some(a => (a?.id || '').trim().toLowerCase() === trimmedId.toLowerCase())) {
         return showToast(`ID "${trimmedId}" is already used by an Administrator`);
       }
     }
 
-    const trimmedPassword = formData.password.trim();
+    const trimmedPassword = (formData.password || '').trim();
     if (!editingId && trimmedPassword.length < 6) {
       return showToast('Password must be at least 6 characters long');
     }
@@ -156,23 +157,33 @@ export default function AdminTeachers() {
         console.warn('Background teacher auth provisioning note:', err.message);
       });
 
+      const teacherRecord = {
+        id: trimmedId,
+        name: trimmedName,
+        subjects: formData.subjects || [],
+        classes: finalClasses,
+        pupils: formData.pupils || []
+      };
+
       // 2. Persist in local roster state
       updateData(draft => {
-        const teacherRecord = {
-          id: trimmedId,
-          name: trimmedName,
-          subjects: formData.subjects,
-          classes: finalClasses,
-          pupils: formData.pupils
-        };
-
+        if (!draft.teachers) draft.teachers = [];
         if (editingId) {
-          const i = draft.teachers.findIndex(x => x.id === editingId);
+          const i = draft.teachers.findIndex(x => (x.id || '').trim().toLowerCase() === editingId.trim().toLowerCase());
           if (i >= 0) draft.teachers[i] = { ...draft.teachers[i], ...teacherRecord };
+          else draft.teachers.push(teacherRecord);
         } else {
           draft.teachers.push(teacherRecord);
         }
       });
+
+      // 3. Persist in Firestore Teacher repository
+      if (schoolId) {
+        await TeacherRepository.upsertTeacher(schoolId, {
+          ...teacherRecord,
+          photo: ''
+        }).catch(console.warn);
+      }
 
       showToast(editingId ? 'Teacher profile and assignments updated successfully' : 'Teacher created and assignments saved successfully');
       setIsOpen(false);
@@ -197,8 +208,13 @@ export default function AdminTeachers() {
       }).catch(err => console.warn('Teacher delete note:', err.message));
 
       updateData(draft => {
-        draft.teachers = draft.teachers.filter(t => t.id !== deleteConfirm);
+        draft.teachers = (draft.teachers || []).filter(t => (t.id || '').trim().toLowerCase() !== deleteConfirm.trim().toLowerCase());
       });
+
+      if (schoolId) {
+        await TeacherRepository.deleteTeacher(schoolId, deleteConfirm).catch(console.warn);
+      }
+
       showToast('Teacher deleted and login access revoked');
       setDeleteConfirm(null);
     } catch (err: any) {

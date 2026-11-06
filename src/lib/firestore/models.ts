@@ -27,6 +27,7 @@ export interface FirestoreTeacherDoc {
   email?: string;
   subjects: string[];
   classes: string[];
+  pupils?: string[];
   photo?: string;
   createdAt: string;
   updatedAt: string;

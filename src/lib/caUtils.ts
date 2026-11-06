@@ -14,7 +14,9 @@ export interface SubjectCAResult {
   isUnrecorded: boolean; // neither recorded
   statusLabel: 'Complete' | 'CA1 Only' | 'CA2 Only' | 'Unrecorded';
   ca1Percentage: number | null; // (ca1 / 20) * 100
+  ca1IsManual?: boolean;
   ca2Percentage: number | null; // (ca2 / 20) * 100
+  ca2IsManual?: boolean;
   combinedPercentage: number | null; // (combinedScore / 40) * 100
   ca1Grade?: string;
   ca2Grade?: string;
@@ -22,6 +24,7 @@ export interface SubjectCAResult {
   combinedRemark?: string;
   examScore?: number | null; // out of config.exam (e.g. 60)
   examMax?: number;
+  examIsManual?: boolean;
   finalSubjectScore?: number | null; // CA1 + CA2 + Exam (out of 100)
   isAcademicComplete?: boolean;
 }
@@ -80,21 +83,76 @@ export function getGradeForPercentage(percentage: number | null, grades: Grade[]
  * - Incomplete subjects are clearly tagged and result is marked provisional
  */
 export function matchSubject(sub1: string = '', sub2: string = ''): boolean {
-  const s1 = (sub1 || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
-  const s2 = (sub2 || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+  const clean = (s: string) => (s || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+  const s1 = clean(sub1);
+  const s2 = clean(sub2);
   if (!s1 || !s2) return false;
   if (s1 === s2) return true;
-  if (s1.includes(s2) || s2.includes(s1)) return true;
 
-  const aliases: [string, string][] = [
+  // Curated educational aliases (only exact alias pairs)
+  const exactAliases: [string, string][] = [
     ['math', 'mathematics'],
     ['maths', 'mathematics'],
+    ['math', 'maths'],
     ['english', 'englishlanguage'],
     ['basicscience', 'basicscienceandtechnology'],
-    ['basicscience', 'science'],
-    ['history', 'nigerianhistory']
+    ['bst', 'basicscienceandtechnology'],
+    ['crs', 'christianreligiousstudies'],
+    ['crk', 'christianreligiousknowledge'],
+    ['irs', 'islamicreligiousstudies'],
+    ['irk', 'islamicreligiousknowledge'],
+    ['cca', 'culturalandcreativearts'],
+    ['creativeart', 'culturalandcreativearts'],
+    ['creativearts', 'culturalandcreativearts'],
+    ['phe', 'physicalandhealtheducation'],
+    ['pe', 'physicaleducation'],
+    ['socialstudies', 'socialstudiesandciviceducation'],
+    ['civic', 'civiceducation'],
+    ['ict', 'computerstudies'],
+    ['computerscience', 'computerstudies'],
+    ['agric', 'agriculturalscience'],
+    ['agriculture', 'agriculturalscience'],
+    ['handwriting', 'penmanship']
   ];
-  return aliases.some(([a, b]) => (s1 === a && s2 === b) || (s1 === b && s2 === a));
+
+  if (exactAliases.some(([a, b]) => (s1 === a && s2 === b) || (s1 === b && s2 === a))) {
+    return true;
+  }
+
+  // Allow standard suffix variations like "language" or "studies"
+  // ONLY if the prefix root is identical and substantial (>= 4 chars), e.g. "french" vs "frenchlanguage"
+  // NEVER allow generic "science" to match "computerscience" or "agriculturalscience"!
+  const suffixes = ['language', 'studies', 'education'];
+  for (const suf of suffixes) {
+    if (s1 === s2 + suf || s2 === s1 + suf) {
+      const root = s1.length < s2.length ? s1 : s2;
+      if (root.length >= 4 && root !== 'science' && root !== 'basic' && root !== 'general' && root !== 'applied') {
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
+export function matchTerm(t1: string = '', t2: string = ''): boolean {
+  const norm = (s: string) => (s || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+  const s1 = norm(t1);
+  const s2 = norm(t2);
+  if (!s1 || !s2) return true; // match if either is unspecified
+  if (s1 === s2) return true;
+  if ((s1.includes('1') || s1.includes('first')) && (s2.includes('1') || s2.includes('first'))) return true;
+  if ((s1.includes('2') || s1.includes('second')) && (s2.includes('2') || s2.includes('second'))) return true;
+  if ((s1.includes('3') || s1.includes('third')) && (s2.includes('3') || s2.includes('third'))) return true;
+  return false;
+}
+
+export function matchSession(s1: string = '', s2: string = ''): boolean {
+  const norm = (s: string) => (s || '').trim().toLowerCase().replace(/[^0-9]/g, '');
+  const n1 = norm(s1);
+  const n2 = norm(s2);
+  if (!n1 || !n2) return true;
+  return n1 === n2 || n1.includes(n2) || n2.includes(n1);
 }
 
 export function computeStudentCASummary(
@@ -106,24 +164,24 @@ export function computeStudentCASummary(
   academicSession: string = '2026/2027',
   term: string = 'First Term'
 ): StudentCASummary {
-  const cleanTerm = (t: string) => (t || '').trim().toLowerCase();
-  const cleanSession = (s: string) => (s || '').trim().toLowerCase();
   const studentIdNorm = (studentId || '').trim().toLowerCase();
 
-  // Filter student assessments for session & term
+  // Filter student assessments for session & term, excluding deleted ones
   const studentAssessments = (assessments || []).filter(a => 
     (a.studentId || '').trim().toLowerCase() === studentIdNorm &&
-    (!a.academicSessionId || cleanSession(a.academicSessionId) === cleanSession(academicSession)) &&
-    (!a.termId || cleanTerm(a.termId) === cleanTerm(term))
+    !(a as any).isDeleted &&
+    a.status !== 'locked' && // only if not deleted/abandoned
+    (!a.academicSessionId || matchSession(a.academicSessionId, academicSession)) &&
+    (!a.termId || matchTerm(a.termId, term))
   );
 
-  // Fallback to legacyResults if any, sorted newest to oldest
+  // Filter student legacy results, excluding deleted results
   const studentLegacyResults = (legacyResults || [])
-    .filter(r => (r.studentId || '').trim().toLowerCase() === studentIdNorm)
+    .filter(r => (r.studentId || '').trim().toLowerCase() === studentIdNorm && !r.isDeleted && !(r as any).deleted)
     .sort((a, b) => new Date(b.submittedAt || 0).getTime() - new Date(a.submittedAt || 0).getTime());
 
   // Canonicalize subjects so variations (e.g. "Math" vs "Mathematics", "English" vs "English Language")
-  // do NOT produce duplicate or unrecorded phantom rows
+  // do NOT produce duplicate or unrecorded phantom rows, but NEVER merge distinct subjects like Computer Science and Basic Science!
   const canonicalSubjects: string[] = [];
   const addCanonical = (subjName: string) => {
     if (!subjName || !subjName.trim()) return;
@@ -142,16 +200,16 @@ export function computeStudentCASummary(
   const isCA1Type = (typeStr: string = '', titleStr: string = '') => {
     const cleanType = (typeStr || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
     const cleanTitle = (titleStr || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
-    if (cleanType === 'ca1' || cleanType === 'afl' || cleanType.startsWith('ca1') || cleanType === 'continuousassessment1') return true;
-    if (cleanTitle.includes('ca1') || cleanTitle.includes('continuousassessment1') || cleanTitle.includes('firsttest')) return true;
+    if (cleanType === 'ca1' || cleanType === 'afl' || cleanType.startsWith('ca1') || cleanType === 'continuousassessment1' || cleanType === 'test1' || cleanType === 'quiz1' || cleanType === 'cat1') return true;
+    if (cleanTitle.includes('ca1') || cleanTitle.includes('continuousassessment1') || cleanTitle.includes('firsttest') || cleanTitle.includes('test1') || cleanTitle.includes('quiz1') || cleanTitle.includes('cat1') || cleanTitle.includes('ca-1') || cleanTitle.includes('ca 1') || cleanTitle.includes('assessment1')) return true;
     return false;
   };
 
   const isCA2Type = (typeStr: string = '', titleStr: string = '') => {
     const cleanType = (typeStr || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
     const cleanTitle = (titleStr || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
-    if (cleanType === 'ca2' || cleanType.startsWith('ca2') || cleanType === 'continuousassessment2') return true;
-    if (cleanTitle.includes('ca2') || cleanTitle.includes('continuousassessment2') || cleanTitle.includes('secondtest')) return true;
+    if (cleanType === 'ca2' || cleanType.startsWith('ca2') || cleanType === 'continuousassessment2' || cleanType === 'test2' || cleanType === 'quiz2' || cleanType === 'cat2') return true;
+    if (cleanTitle.includes('ca2') || cleanTitle.includes('continuousassessment2') || cleanTitle.includes('secondtest') || cleanTitle.includes('test2') || cleanTitle.includes('quiz2') || cleanTitle.includes('cat2') || cleanTitle.includes('ca-2') || cleanTitle.includes('ca 2') || cleanTitle.includes('assessment2')) return true;
     return false;
   };
 
@@ -162,19 +220,47 @@ export function computeStudentCASummary(
   };
 
   // Helper to safely extract score from a Result record without treating 0 as null
-  const extractResultScore = (res: Result | null, maxMark: number): number | null => {
+  const extractResultScore = (res: Result | null, maxMark: number = 20): number | null => {
     if (!res) return null;
-    if (typeof res.scaled === 'number' && !isNaN(res.scaled)) {
-      return Math.max(0, Math.min(maxMark, Math.round(res.scaled)));
+    const toNum = (v: any): number | null => {
+      if (v === null || v === undefined || v === '') return null;
+      const n = Number(v);
+      return !isNaN(n) ? n : null;
+    };
+
+    const scaled = toNum(res.scaled);
+    const raw = toNum(res.raw);
+    const rawMax = toNum(res.rawMax);
+    const pct = toNum(res.percentage);
+    const score = toNum((res as any).score);
+    const resMax = toNum((res as any).max);
+
+    if (scaled !== null) {
+      if (resMax && resMax !== maxMark && resMax > 0) {
+        return Math.max(0, Math.min(maxMark, Math.round((scaled / resMax) * maxMark)));
+      }
+      return Math.max(0, Math.min(maxMark, Math.round(scaled)));
     }
-    if (typeof res.raw === 'number' && typeof res.rawMax === 'number' && res.rawMax > 0) {
-      return Math.max(0, Math.min(maxMark, Math.round((res.raw / res.rawMax) * maxMark)));
+
+    if (raw !== null && rawMax !== null && rawMax > 0) {
+      return Math.max(0, Math.min(maxMark, Math.round((raw / rawMax) * maxMark)));
     }
-    if (typeof res.percentage === 'number' && !isNaN(res.percentage)) {
-      return Math.max(0, Math.min(maxMark, Math.round((res.percentage / 100) * maxMark)));
+
+    if (pct !== null) {
+      return Math.max(0, Math.min(maxMark, Math.round((pct / 100) * maxMark)));
     }
+
+    if (score !== null) {
+      const max = resMax || 100;
+      return Math.max(0, Math.min(maxMark, Math.round((score / max) * maxMark)));
+    }
+
     return null;
   };
+
+  const ca1Max = config.ca1 || 20;
+  const ca2Max = config.ca2 || 20;
+  const examMax = config.exam || 60;
 
   const subjectResults: SubjectCAResult[] = subjectList.map(subj => {
     const subjNorm = subj.trim().toLowerCase();
@@ -188,6 +274,10 @@ export function computeStudentCASummary(
       ((a.subjectId || '').trim().toLowerCase() === subjNorm || matchSubject(a.subjectId, subj)) && 
       isCA2Type(a.assessmentType)
     );
+    const examRecord = studentAssessments.find(a => 
+      ((a.subjectId || '').trim().toLowerCase() === subjNorm || matchSubject(a.subjectId, subj)) && 
+      isExamType(a.assessmentType)
+    );
 
     // 2. Check legacy / CBT results fallback
     const matchingResultsForSubj = studentLegacyResults.filter(r => 
@@ -196,10 +286,10 @@ export function computeStudentCASummary(
 
     const matchingCA1Results = matchingResultsForSubj.filter(r => {
       const title = (r as any).examTitle || (r as any).title || '';
-      return isCA1Type(r.type, title) || (['Test', 'Quiz', 'Assignment'].includes(r.type) && !isCA2Type(r.type, title));
+      return isCA1Type(r.type, title) || (['Test', 'Quiz', 'Assignment', 'CA 1', 'AFL'].includes(r.type) && !isCA2Type(r.type, title));
     }).sort((a, b) => {
-      const scoreA = typeof a.scaled === 'number' ? a.scaled : (a.percentage || 0);
-      const scoreB = typeof b.scaled === 'number' ? b.scaled : (b.percentage || 0);
+      const scoreA = extractResultScore(a, ca1Max) ?? -1;
+      const scoreB = extractResultScore(b, ca1Max) ?? -1;
       return scoreB - scoreA;
     });
     const legacyCA1 = matchingCA1Results.length > 0 ? matchingCA1Results[0] : null;
@@ -208,8 +298,8 @@ export function computeStudentCASummary(
       const title = (r as any).examTitle || (r as any).title || '';
       return isCA2Type(r.type, title);
     }).sort((a, b) => {
-      const scoreA = typeof a.scaled === 'number' ? a.scaled : (a.percentage || 0);
-      const scoreB = typeof b.scaled === 'number' ? b.scaled : (b.percentage || 0);
+      const scoreA = extractResultScore(a, ca2Max) ?? -1;
+      const scoreB = extractResultScore(b, ca2Max) ?? -1;
       return scoreB - scoreA;
     });
     const legacyCA2 = matchingCA2Results.length > 0 ? matchingCA2Results[0] : null;
@@ -218,35 +308,73 @@ export function computeStudentCASummary(
       const title = (r as any).examTitle || (r as any).title || '';
       return isExamType(r.type, title);
     }).sort((a, b) => {
-      const scoreA = typeof a.scaled === 'number' ? a.scaled : (a.percentage || 0);
-      const scoreB = typeof b.scaled === 'number' ? b.scaled : (b.percentage || 0);
+      const scoreA = extractResultScore(a, examMax) ?? -1;
+      const scoreB = extractResultScore(b, examMax) ?? -1;
       return scoreB - scoreA;
     });
     const legacyExam = matchingExamResults.length > 0 ? matchingExamResults[0] : null;
 
-    // CA1 score extraction
-    const ca1Max = config.ca1 || 20;
+    // CA1 score extraction (Manual override takes priority; unedited CBT scores remain valid)
     let ca1Score: number | null = null;
-    if (ca1Record && typeof ca1Record.score === 'number' && !isNaN(ca1Record.score)) {
+    let ca1IsManual = false;
+    const isManualCA1Record = ca1Record && (ca1Record.isManualOverride || (ca1Record.enteredBy && ca1Record.enteredBy.role !== 'student'));
+    const isManualLegacyCA1 = legacyCA1 && (legacyCA1.isManualOverride || (legacyCA1 as any).teacherScore !== undefined);
+
+    if (isManualCA1Record && typeof ca1Record?.score === 'number' && !isNaN(ca1Record.score)) {
       ca1Score = Math.max(0, Math.min(ca1Max, Math.round(ca1Record.score)));
-    } else if (legacyCA1) {
+      ca1IsManual = true;
+    } else if (isManualLegacyCA1) {
       ca1Score = extractResultScore(legacyCA1, ca1Max);
+      ca1IsManual = true;
+    } else if (legacyCA1) {
+      // Unedited CBT score remains valid
+      ca1Score = extractResultScore(legacyCA1, ca1Max);
+      ca1IsManual = false;
+    } else if (ca1Record && typeof ca1Record.score === 'number' && !isNaN(ca1Record.score)) {
+      ca1Score = Math.max(0, Math.min(ca1Max, Math.round(ca1Record.score)));
+      ca1IsManual = !!ca1Record.isManualOverride;
     }
 
-    // CA2 score extraction
-    const ca2Max = config.ca2 || 20;
+    // CA2 score extraction (Manual override takes priority; unedited CBT scores remain valid)
     let ca2Score: number | null = null;
-    if (ca2Record && typeof ca2Record.score === 'number' && !isNaN(ca2Record.score)) {
+    let ca2IsManual = false;
+    const isManualCA2Record = ca2Record && (ca2Record.isManualOverride || (ca2Record.enteredBy && ca2Record.enteredBy.role !== 'student'));
+    const isManualLegacyCA2 = legacyCA2 && (legacyCA2.isManualOverride || (legacyCA2 as any).teacherScore !== undefined);
+
+    if (isManualCA2Record && typeof ca2Record?.score === 'number' && !isNaN(ca2Record.score)) {
       ca2Score = Math.max(0, Math.min(ca2Max, Math.round(ca2Record.score)));
-    } else if (legacyCA2) {
+      ca2IsManual = true;
+    } else if (isManualLegacyCA2) {
       ca2Score = extractResultScore(legacyCA2, ca2Max);
+      ca2IsManual = true;
+    } else if (legacyCA2) {
+      // Unedited CBT score remains valid
+      ca2Score = extractResultScore(legacyCA2, ca2Max);
+      ca2IsManual = false;
+    } else if (ca2Record && typeof ca2Record.score === 'number' && !isNaN(ca2Record.score)) {
+      ca2Score = Math.max(0, Math.min(ca2Max, Math.round(ca2Record.score)));
+      ca2IsManual = !!ca2Record.isManualOverride;
     }
 
-    // Exam score extraction
-    const examMax = config.exam || 60;
+    // Exam score extraction (Manual override takes priority; unedited CBT scores remain valid)
     let examScore: number | null = null;
-    if (legacyExam) {
+    let examIsManual = false;
+    const isManualExamRecord = examRecord && (examRecord.isManualOverride || (examRecord.enteredBy && examRecord.enteredBy.role !== 'student'));
+    const isManualLegacyExam = legacyExam && (legacyExam.isManualOverride || (legacyExam as any).teacherScore !== undefined);
+
+    if (isManualExamRecord && typeof examRecord?.score === 'number' && !isNaN(examRecord.score)) {
+      examScore = Math.max(0, Math.min(examMax, Math.round(examRecord.score)));
+      examIsManual = true;
+    } else if (isManualLegacyExam) {
       examScore = extractResultScore(legacyExam, examMax);
+      examIsManual = true;
+    } else if (legacyExam) {
+      // Unedited CBT score remains valid
+      examScore = extractResultScore(legacyExam, examMax);
+      examIsManual = false;
+    } else if (examRecord && typeof examRecord.score === 'number' && !isNaN(examRecord.score)) {
+      examScore = Math.max(0, Math.min(examMax, Math.round(examRecord.score)));
+      examIsManual = !!examRecord.isManualOverride;
     }
 
     const hasCA1 = ca1Score !== null;
@@ -282,8 +410,10 @@ export function computeStudentCASummary(
       subject: subj,
       ca1Score,
       ca1Max: 20,
+      ca1IsManual,
       ca2Score,
       ca2Max: 20,
+      ca2IsManual,
       combinedScore,
       combinedMax: 40,
       provisionalScore,
@@ -300,6 +430,7 @@ export function computeStudentCASummary(
       combinedRemark: isComplete ? combinedGradeInfo.remark : undefined,
       examScore,
       examMax,
+      examIsManual,
       finalSubjectScore,
       isAcademicComplete
     };

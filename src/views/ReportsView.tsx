@@ -7,8 +7,11 @@ import html2canvas from 'html2canvas-pro';
 import { Chart as ChartJS, CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend } from 'chart.js';
 import { Bar } from 'react-chartjs-2';
 import { isStudentInTeacherClasses } from '../lib/classUtils';
-import { computeStudentCASummary } from '../lib/caUtils';
+import { computeStudentCASummary, matchSubject } from '../lib/caUtils';
 import { calculateGradeAndRemark } from '../lib/scoringEngine';
+import { AssessmentRecord, AssessmentType } from '../types';
+import { AssessmentRepository } from '../lib/firestore/repositories/assessmentRepository';
+import { ResultRepository } from '../lib/firestore/repositories/resultRepository';
 import CAReportCardView from './CAReportCardView';
 import {
   useSchoolResultsSubscription,
@@ -22,7 +25,7 @@ interface ReportsViewProps {
 }
 
 export default function ReportsView({ initialCategory = 'academic' }: ReportsViewProps) {
-  const { data, config, branding, currentUser, currentRole, updateData, schoolId } = useStore();
+  const { data, config, branding, currentUser, currentRole, updateData, schoolId, saveAssessment, deleteAssessment } = useStore();
   const showToast = useToastStore(s => s.showToast);
 
   // Live students and results subscriptions
@@ -75,6 +78,208 @@ export default function ReportsView({ initialCategory = 'academic' }: ReportsVie
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
   
   const reportRef = useRef<HTMLDivElement>(null);
+
+  const [isEditAcademicScores, setIsEditAcademicScores] = useState(false);
+  const [isAddAcademicSubjectOpen, setIsAddAcademicSubjectOpen] = useState(false);
+  const [newAcademicSubj, setNewAcademicSubj] = useState('');
+  const [newAcademicCA1, setNewAcademicCA1] = useState('');
+  const [newAcademicCA2, setNewAcademicCA2] = useState('');
+  const [newAcademicExam, setNewAcademicExam] = useState('');
+  const [editingAcademicScores, setEditingAcademicScores] = useState<{ [key: string]: string }>({});
+
+  const handleAcademicScoreChange = async (
+    subject: string,
+    component: 'CA1' | 'CA2' | 'Examination',
+    val: string
+  ) => {
+    if (!studentId || !schoolId) return;
+    const currentStudent = allStudents.find(x => (x.id || '').trim().toLowerCase() === (studentId || '').trim().toLowerCase());
+    if (!currentStudent) return;
+
+    const trimmed = (val || '').trim();
+    if (trimmed === '') return;
+    const num = Number(trimmed);
+    const maxMark = component === 'Examination' ? (config.exam || 60) : 20;
+
+    if (isNaN(num) || num < 0 || num > maxMark) {
+      showToast(`Score must be a number between 0 and ${maxMark}`);
+      return;
+    }
+
+    const sessionStr = reportForm.session || '2026/2027';
+    const termStr = reportForm.term || 'First Term';
+    const assessmentId = AssessmentRepository.generateId(
+      currentStudent.id,
+      subject,
+      component,
+      sessionStr,
+      termStr
+    );
+
+    const record: AssessmentRecord = {
+      id: assessmentId,
+      schoolId,
+      studentId: currentStudent.id,
+      subjectId: subject,
+      assessmentType: component,
+      academicSessionId: sessionStr,
+      termId: termStr,
+      classId: currentStudent.class || 'Primary 5',
+      score: num,
+      maximumScore: maxMark,
+      status: 'submitted',
+      isManualOverride: true,
+      enteredAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      enteredBy: {
+        id: currentUser?.id || 'staff',
+        name: currentUser?.name || 'Staff',
+        role: currentRole || 'teacher'
+      }
+    };
+
+    updateData(draft => {
+      if (!draft.assessments) draft.assessments = [];
+      const idx = draft.assessments.findIndex(a => a.id === assessmentId);
+      if (idx >= 0) {
+        draft.assessments[idx] = { ...draft.assessments[idx], ...record };
+      } else {
+        draft.assessments.push(record);
+      }
+
+      if (!draft.subjects) draft.subjects = [];
+      if (!draft.subjects.some(s => matchSubject(s, subject))) {
+        draft.subjects.push(subject);
+      }
+
+      if (!draft.results) draft.results = [];
+      const existingResIdx = draft.results.findIndex(r => 
+        (r.studentId || '').trim().toLowerCase() === currentStudent.id.trim().toLowerCase() &&
+        matchSubject(r.subject, subject) &&
+        (component === 'CA1' 
+          ? (r.type === 'CA 1' || r.type === 'CA1' || r.type === 'AFL') 
+          : component === 'CA2' 
+          ? (r.type === 'CA 2' || r.type === 'CA2') 
+          : (r.type === 'Examination' || (r.type || '').toLowerCase().includes('exam')))
+      );
+      if (existingResIdx >= 0) {
+        draft.results[existingResIdx] = {
+          ...draft.results[existingResIdx],
+          scaled: num,
+          raw: num,
+          percentage: Math.round((num / maxMark) * 100),
+          isManualOverride: true
+        };
+      }
+    });
+
+    try {
+      await saveAssessment(record);
+      showToast(`${subject} ${component} updated to ${num}/${maxMark}`);
+    } catch (e) {
+      console.warn('Failed to save assessment to Firestore:', e);
+    }
+  };
+
+  const handleAcademicClearScore = async (
+    subject: string,
+    component: 'CA1' | 'CA2' | 'Examination' | 'All'
+  ) => {
+    if (!studentId || !schoolId) return;
+    const currentStudent = allStudents.find(x => (x.id || '').trim().toLowerCase() === (studentId || '').trim().toLowerCase());
+    if (!currentStudent) return;
+
+    const sessionStr = reportForm.session || '2026/2027';
+    const termStr = reportForm.term || 'First Term';
+    const componentsToDelete: ('CA1' | 'CA2' | 'Examination')[] = component === 'All' 
+      ? ['CA1', 'CA2', 'Examination'] 
+      : [component];
+
+    for (const comp of componentsToDelete) {
+      const assessmentId = AssessmentRepository.generateId(
+        currentStudent.id,
+        subject,
+        comp,
+        sessionStr,
+        termStr
+      );
+      await deleteAssessment(assessmentId);
+
+      const matchingResults = (data.results || []).filter(r => 
+        (r.studentId || '').trim().toLowerCase() === currentStudent.id.trim().toLowerCase() &&
+        matchSubject(r.subject, subject) &&
+        (comp === 'CA1' 
+          ? (r.type === 'CA 1' || r.type === 'CA1' || r.type === 'AFL') 
+          : comp === 'CA2' 
+          ? (r.type === 'CA 2' || r.type === 'CA2') 
+          : (r.type === 'Examination' || (r.type || '').toLowerCase().includes('exam')))
+      );
+
+      for (const r of matchingResults) {
+        await ResultRepository.deleteResult(schoolId, String(r.id)).catch(console.warn);
+        try {
+          const delKey = `educore_deleted_results_${schoolId}`;
+          const delArr = JSON.parse(localStorage.getItem(delKey) || '[]');
+          if (!delArr.includes(String(r.id))) {
+            delArr.push(String(r.id));
+            localStorage.setItem(delKey, JSON.stringify(delArr));
+          }
+        } catch (e) {}
+      }
+
+      updateData(draft => {
+        if (draft.assessments) {
+          draft.assessments = draft.assessments.filter(a => a.id !== assessmentId);
+        }
+        if (draft.results) {
+          draft.results = draft.results.filter(r => !matchingResults.some(m => String(m.id) === String(r.id)));
+        }
+      });
+    }
+
+    setEditingAcademicScores(prev => {
+      const next = { ...prev };
+      delete next[`${subject}_CA1`];
+      delete next[`${subject}_CA2`];
+      delete next[`${subject}_Examination`];
+      return next;
+    });
+
+    showToast(`${subject} score cleared`);
+  };
+
+  const handleAddAcademicSubjectSubmit = async () => {
+    if (!studentId || !schoolId) return;
+    const subj = newAcademicSubj.trim();
+    if (!subj) {
+      showToast('Please enter or select a subject name');
+      return;
+    }
+
+    updateData(draft => {
+      if (!draft.subjects) draft.subjects = [];
+      if (!draft.subjects.some(s => matchSubject(s, subj))) {
+        draft.subjects.push(subj);
+      }
+    });
+
+    if (newAcademicCA1.trim() !== '') {
+      await handleAcademicScoreChange(subj, 'CA1', newAcademicCA1.trim());
+    }
+    if (newAcademicCA2.trim() !== '') {
+      await handleAcademicScoreChange(subj, 'CA2', newAcademicCA2.trim());
+    }
+    if (newAcademicExam.trim() !== '') {
+      await handleAcademicScoreChange(subj, 'Examination', newAcademicExam.trim());
+    }
+
+    showToast(`Subject "${subj}" added to report card`);
+    setIsAddAcademicSubjectOpen(false);
+    setNewAcademicSubj('');
+    setNewAcademicCA1('');
+    setNewAcademicCA2('');
+    setNewAcademicExam('');
+  };
 
   useEffect(() => {
     if (students.length > 0 && !students.find(s => s.id === studentId)) {
@@ -271,15 +476,13 @@ export default function ReportsView({ initialCategory = 'academic' }: ReportsVie
       r => (r.studentId || '').trim().toLowerCase() === studentIdNorm
     );
 
-    // Build unique subjects list
+    // Build unique subjects list (curriculum + all tests taken)
     const subjectsSet = new Set<string>();
+    (data.subjects || []).forEach(sub => subjectsSet.add(sub));
     studentAssessments.forEach(a => { if (a.subjectId) subjectsSet.add(a.subjectId); });
     studentResults.forEach(r => {
-      if (['CA 1', 'CA 2', 'Examination', 'AFL', 'Test', 'Quiz', 'Assignment'].includes(r.type) && r.subject) subjectsSet.add(r.subject);
+      if (r.subject) subjectsSet.add(r.subject);
     });
-    if (subjectsSet.size === 0) {
-      (data.subjects || []).forEach(sub => subjectsSet.add(sub));
-    }
     const allSubjects = Array.from(subjectsSet);
 
     const caSummary = computeStudentCASummary(
@@ -313,7 +516,10 @@ export default function ReportsView({ initialCategory = 'academic' }: ReportsVie
         examMax,
         total,
         isComplete,
-        g
+        g,
+        ca1IsManual: subItem.ca1IsManual,
+        ca2IsManual: subItem.ca2IsManual,
+        examIsManual: subItem.examIsManual
       };
     });
 
@@ -453,17 +659,44 @@ export default function ReportsView({ initialCategory = 'academic' }: ReportsVie
             </div>
           </div>
 
+          {/* Staff Editing Toolbar for Academic Report Sheet */}
+          {currentRole !== 'student' && (
+            <div className="flex flex-wrap items-center justify-between p-2 mb-2 bg-slate-100 rounded-lg border border-slate-200 gap-2 print:hidden">
+              <div className="flex items-center gap-2">
+                <Button
+                  variant={isEditAcademicScores ? 'primary' : 'secondary'}
+                  onClick={() => setIsEditAcademicScores(!isEditAcademicScores)}
+                  className={`text-xs py-1 px-3 font-bold flex items-center gap-1 transition ${isEditAcademicScores ? 'bg-amber-600 hover:bg-amber-700 text-white shadow-2xs' : 'text-slate-700 border-slate-300'}`}
+                >
+                  <span>{isEditAcademicScores ? '✓ Finish Editing Scores' : '✏️ Edit Scores on Report Sheet'}</span>
+                </Button>
+                <Button
+                  variant="secondary"
+                  onClick={() => setIsAddAcademicSubjectOpen(true)}
+                  className="text-xs py-1 px-3 font-bold text-blue-700 bg-blue-50 border-blue-200 hover:bg-blue-100 transition"
+                >
+                  <span>➕</span> Add Subject (e.g. Handwriting)
+                </Button>
+              </div>
+              <span className="text-[10.5px] text-slate-500 italic">
+                {isEditAcademicScores 
+                  ? 'Type scores directly in cells (CA1: /20, CA2: /20, Exam: /60). Changes save & calculate immediately.' 
+                  : 'Manual scores override CBT; unedited CBT scores remain valid.'}
+              </span>
+            </div>
+          )}
+
           {/* Academic Performance Table */}
           <div className="border border-slate-300 rounded-lg overflow-hidden mb-3">
             <table className="w-full border-collapse text-[11px]">
               <thead>
                 <tr className="bg-slate-100 text-slate-800 font-bold border-b border-slate-300">
                   <th className="p-2 text-left">Subject</th>
-                  <th className="p-2 text-center w-[10%]">CA 1 (20)</th>
-                  <th className="p-2 text-center w-[10%]">CA 2 (20)</th>
-                  <th className="p-2 text-center w-[14%] font-black text-blue-900">Combined CA (40)</th>
+                  <th className="p-2 text-center w-[11%]">CA 1 (20)</th>
+                  <th className="p-2 text-center w-[11%]">CA 2 (20)</th>
+                  <th className="p-2 text-center w-[13%] font-black text-blue-900">Combined CA (40)</th>
                   <th className="p-2 text-center w-[13%]">Exam ({config.exam || 60})</th>
-                  <th className="p-2 text-center w-[13%] font-black text-slate-900">Total (100)</th>
+                  <th className="p-2 text-center w-[12%] font-black text-slate-900">Total (100)</th>
                   <th className="p-2 text-center w-[10%]">Grade</th>
                   <th className="p-2 text-left w-[16%]">Remark</th>
                 </tr>
@@ -471,12 +704,109 @@ export default function ReportsView({ initialCategory = 'academic' }: ReportsVie
               <tbody className="divide-y divide-slate-200">
                 {rows.map((r, i) => (
                   <tr key={r.sub} className={i % 2 === 1 ? 'bg-slate-50/50' : 'bg-white'}>
-                    <td className="p-1.5 px-2 font-medium text-slate-900">{r.sub}</td>
-                    <td className="p-1.5 text-center text-slate-700">
-                      {r.ca1 !== null ? r.ca1 : <span className="text-amber-600 italic text-[10px]">Unrecorded</span>}
+                    <td className="p-1.5 px-2 font-medium text-slate-900">
+                      <div className="flex items-center justify-between">
+                        <span>{r.sub}</span>
+                        {(r.ca1IsManual || r.ca2IsManual || r.examIsManual) && (
+                          <span className="text-[9px] px-1 py-0.2 rounded bg-blue-100 text-blue-800 font-semibold print:hidden" title="Manually edited score (overrides CBT)">
+                            Manual
+                          </span>
+                        )}
+                      </div>
                     </td>
                     <td className="p-1.5 text-center text-slate-700">
-                      {r.ca2 !== null ? r.ca2 : <span className="text-amber-600 italic text-[10px]">Unrecorded</span>}
+                      {isEditAcademicScores && currentRole !== 'student' ? (
+                        <div className="flex items-center justify-center gap-1 print:hidden">
+                          <input
+                            type="number"
+                            min="0"
+                            max="20"
+                            step="1"
+                            value={editingAcademicScores[`${r.sub}_CA1`] !== undefined ? editingAcademicScores[`${r.sub}_CA1`] : (r.ca1 !== null ? String(r.ca1) : '')}
+                            placeholder="0-20"
+                            onChange={e => {
+                              const val = e.target.value;
+                              setEditingAcademicScores(prev => ({ ...prev, [`${r.sub}_CA1`]: val }));
+                            }}
+                            onBlur={e => {
+                              const val = e.target.value.trim();
+                              if (val !== '' && Number(val) !== r.ca1) {
+                                handleAcademicScoreChange(r.sub, 'CA1', val);
+                              }
+                            }}
+                            onKeyDown={e => {
+                              if (e.key === 'Enter') {
+                                const val = (e.target as HTMLInputElement).value.trim();
+                                if (val !== '') {
+                                  handleAcademicScoreChange(r.sub, 'CA1', val);
+                                }
+                                (e.target as HTMLInputElement).blur();
+                              }
+                            }}
+                            className="w-12 px-1 py-0.5 text-center font-bold text-xs border border-blue-400 rounded focus:ring-1 focus:ring-blue-500 bg-white text-slate-900 shadow-2xs"
+                          />
+                          {r.ca1 !== null && (
+                            <button
+                              type="button"
+                              onClick={() => handleAcademicClearScore(r.sub, 'CA1')}
+                              className="text-slate-400 hover:text-rose-600 text-xs p-0.5"
+                              title="Clear CA1 score"
+                            >
+                              ✕
+                            </button>
+                          )}
+                        </div>
+                      ) : null}
+                      <span className={isEditAcademicScores && currentRole !== 'student' ? 'hidden print:inline-block' : 'inline-block'}>
+                        {r.ca1 !== null ? r.ca1 : <span className="text-amber-600 italic text-[10px]">Unrecorded</span>}
+                      </span>
+                    </td>
+                    <td className="p-1.5 text-center text-slate-700">
+                      {isEditAcademicScores && currentRole !== 'student' ? (
+                        <div className="flex items-center justify-center gap-1 print:hidden">
+                          <input
+                            type="number"
+                            min="0"
+                            max="20"
+                            step="1"
+                            value={editingAcademicScores[`${r.sub}_CA2`] !== undefined ? editingAcademicScores[`${r.sub}_CA2`] : (r.ca2 !== null ? String(r.ca2) : '')}
+                            placeholder="0-20"
+                            onChange={e => {
+                              const val = e.target.value;
+                              setEditingAcademicScores(prev => ({ ...prev, [`${r.sub}_CA2`]: val }));
+                            }}
+                            onBlur={e => {
+                              const val = e.target.value.trim();
+                              if (val !== '' && Number(val) !== r.ca2) {
+                                handleAcademicScoreChange(r.sub, 'CA2', val);
+                              }
+                            }}
+                            onKeyDown={e => {
+                              if (e.key === 'Enter') {
+                                const val = (e.target as HTMLInputElement).value.trim();
+                                if (val !== '') {
+                                  handleAcademicScoreChange(r.sub, 'CA2', val);
+                                }
+                                (e.target as HTMLInputElement).blur();
+                              }
+                            }}
+                            className="w-12 px-1 py-0.5 text-center font-bold text-xs border border-indigo-400 rounded focus:ring-1 focus:ring-indigo-500 bg-white text-slate-900 shadow-2xs"
+                          />
+                          {r.ca2 !== null && (
+                            <button
+                              type="button"
+                              onClick={() => handleAcademicClearScore(r.sub, 'CA2')}
+                              className="text-slate-400 hover:text-rose-600 text-xs p-0.5"
+                              title="Clear CA2 score"
+                            >
+                              ✕
+                            </button>
+                          )}
+                        </div>
+                      ) : null}
+                      <span className={isEditAcademicScores && currentRole !== 'student' ? 'hidden print:inline-block' : 'inline-block'}>
+                        {r.ca2 !== null ? r.ca2 : <span className="text-amber-600 italic text-[10px]">Unrecorded</span>}
+                      </span>
                     </td>
                     <td className="p-1.5 text-center font-bold text-blue-900">
                       {r.combinedCA !== null ? (
@@ -488,13 +818,59 @@ export default function ReportsView({ initialCategory = 'academic' }: ReportsVie
                       )}
                     </td>
                     <td className="p-1.5 text-center text-slate-700">
-                      {r.exam !== null ? `${r.exam} / ${r.examMax}` : <span className="text-amber-600 italic text-[10px]">Unrecorded</span>}
+                      {isEditAcademicScores && currentRole !== 'student' ? (
+                        <div className="flex items-center justify-center gap-1 print:hidden">
+                          <input
+                            type="number"
+                            min="0"
+                            max={r.examMax || config.exam || 60}
+                            step="1"
+                            value={editingAcademicScores[`${r.sub}_Examination`] !== undefined ? editingAcademicScores[`${r.sub}_Examination`] : (r.exam !== null ? String(r.exam) : '')}
+                            placeholder={`0-${r.examMax || 60}`}
+                            onChange={e => {
+                              const val = e.target.value;
+                              setEditingAcademicScores(prev => ({ ...prev, [`${r.sub}_Examination`]: val }));
+                            }}
+                            onBlur={e => {
+                              const val = e.target.value.trim();
+                              if (val !== '' && Number(val) !== r.exam) {
+                                handleAcademicScoreChange(r.sub, 'Examination', val);
+                              }
+                            }}
+                            onKeyDown={e => {
+                              if (e.key === 'Enter') {
+                                const val = (e.target as HTMLInputElement).value.trim();
+                                if (val !== '') {
+                                  handleAcademicScoreChange(r.sub, 'Examination', val);
+                                }
+                                (e.target as HTMLInputElement).blur();
+                              }
+                            }}
+                            className="w-14 px-1 py-0.5 text-center font-bold text-xs border border-slate-400 rounded focus:ring-1 focus:ring-slate-500 bg-white text-slate-900 shadow-2xs"
+                          />
+                          {r.exam !== null && (
+                            <button
+                              type="button"
+                              onClick={() => handleAcademicClearScore(r.sub, 'Examination')}
+                              className="text-slate-400 hover:text-rose-600 text-xs p-0.5"
+                              title="Clear Exam score"
+                            >
+                              ✕
+                            </button>
+                          )}
+                        </div>
+                      ) : null}
+                      <span className={isEditAcademicScores && currentRole !== 'student' ? 'hidden print:inline-block' : 'inline-block'}>
+                        {r.exam !== null ? `${r.exam} / ${r.examMax}` : <span className="text-amber-600 italic text-[10px]">Unrecorded</span>}
+                      </span>
                     </td>
                     <td className="p-1.5 text-center font-bold text-slate-900">
                       {r.isComplete && r.total !== null ? (
                         r.total
                       ) : (
-                        <span className="text-amber-700 font-semibold text-[10px]">Provisional</span>
+                        <span className="text-amber-700 font-semibold text-[10px]">
+                          {r.total !== null ? `${r.total} (Part)` : 'Provisional'}
+                        </span>
                       )}
                     </td>
                     <td className="p-1.5 text-center">
@@ -502,7 +878,21 @@ export default function ReportsView({ initialCategory = 'academic' }: ReportsVie
                         {r.g.grade}
                       </span>
                     </td>
-                    <td className="p-1.5 px-2 text-slate-600 text-[10.5px]">{r.g.remark}</td>
+                    <td className="p-1.5 px-2 text-slate-600 text-[10.5px]">
+                      <div className="flex items-center justify-between">
+                        <span>{r.g.remark}</span>
+                        {isEditAcademicScores && (r.ca1 !== null || r.ca2 !== null || r.exam !== null) && (
+                          <button
+                            type="button"
+                            onClick={() => handleAcademicClearScore(r.sub, 'All')}
+                            className="text-rose-500 hover:text-rose-700 text-[10px] ml-1 font-semibold underline print:hidden"
+                            title="Clear all scores for this subject"
+                          >
+                            Clear All
+                          </button>
+                        )}
+                      </div>
+                    </td>
                   </tr>
                 ))}
                 {rows.length === 0 && (
@@ -1310,6 +1700,113 @@ export default function ReportsView({ initialCategory = 'academic' }: ReportsVie
               {isGeneratingPdf ? 'Generating High-Res PDF...' : 'Download High-Res PDF'}
             </Button>
             <Button variant="secondary" onClick={() => setIsReportOpen(false)}>Close</Button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Add Non-CBT Subject / Score Modal for Academic Report */}
+      <Modal
+        isOpen={isAddAcademicSubjectOpen}
+        onClose={() => setIsAddAcademicSubjectOpen(false)}
+        className="max-w-md p-5"
+      >
+        <div className="space-y-4">
+          <div className="flex items-center justify-between pb-3 border-b border-slate-200">
+            <div>
+              <h3 className="text-base font-bold text-slate-900 m-0">Add Subject / Input Scores</h3>
+              <p className="text-xs text-slate-500 m-0 mt-0.5">
+                Add non-CBT subjects (Handwriting, CCA, PHE, Music, French) or any test to {s?.name}'s report sheet.
+              </p>
+            </div>
+            <button
+              onClick={() => setIsAddAcademicSubjectOpen(false)}
+              className="text-slate-400 hover:text-slate-600 text-lg font-bold"
+            >
+              ✕
+            </button>
+          </div>
+
+          <div>
+            <Label className="mt-0 text-xs font-semibold">Select or Type Subject</Label>
+            <div className="space-y-2">
+              <Select
+                value={newAcademicSubj}
+                onChange={e => setNewAcademicSubj(e.target.value)}
+              >
+                <option value="">-- Choose Subject or enter below --</option>
+                <option value="Handwriting">Handwriting</option>
+                <option value="Cultural & Creative Arts">Cultural & Creative Arts (CCA)</option>
+                <option value="Physical & Health Education">Physical & Health Education (PHE)</option>
+                <option value="Music">Music</option>
+                <option value="French">French</option>
+                <option value="Dictation & Spelling">Dictation & Spelling</option>
+                <option value="Civic Education">Civic Education</option>
+                <option value="Christian Religious Studies">Christian Religious Studies (CRS)</option>
+                <option value="Islamic Religious Studies">Islamic Religious Studies (IRS)</option>
+                <option value="Home Economics">Home Economics</option>
+                <option value="Agricultural Science">Agricultural Science</option>
+                <option value="Verbal Reasoning">Verbal Reasoning</option>
+                <option value="Quantitative Reasoning">Quantitative Reasoning</option>
+              </Select>
+              <Input
+                placeholder="Or type custom subject (e.g. Handwriting, Craft)"
+                value={newAcademicSubj}
+                onChange={e => setNewAcademicSubj(e.target.value)}
+              />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-3 gap-2">
+            <div>
+              <Label className="mt-0 text-[11px] font-semibold">CA 1 (/20)</Label>
+              <Input
+                type="number"
+                min="0"
+                max="20"
+                placeholder="0 - 20"
+                value={newAcademicCA1}
+                onChange={e => setNewAcademicCA1(e.target.value)}
+              />
+            </div>
+            <div>
+              <Label className="mt-0 text-[11px] font-semibold">CA 2 (/20)</Label>
+              <Input
+                type="number"
+                min="0"
+                max="20"
+                placeholder="0 - 20"
+                value={newAcademicCA2}
+                onChange={e => setNewAcademicCA2(e.target.value)}
+              />
+            </div>
+            <div>
+              <Label className="mt-0 text-[11px] font-semibold">Exam (/{config.exam || 60})</Label>
+              <Input
+                type="number"
+                min="0"
+                max={config.exam || 60}
+                placeholder={`0 - ${config.exam || 60}`}
+                value={newAcademicExam}
+                onChange={e => setNewAcademicExam(e.target.value)}
+              />
+            </div>
+          </div>
+
+          <div className="text-[11px] text-slate-500 bg-slate-50 p-2.5 rounded border border-slate-200">
+            💡 <strong>Note:</strong> Manually inputted marks immediately count towards continuous assessment and terminal examination totals, average, class rank, and grade.
+          </div>
+
+          <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-200">
+            <Button variant="secondary" onClick={() => setIsAddAcademicSubjectOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={handleAddAcademicSubjectSubmit}
+              disabled={!newAcademicSubj.trim()}
+              className="bg-blue-600 hover:bg-blue-700 text-white font-bold"
+            >
+              Add to Academic Report
+            </Button>
           </div>
         </div>
       </Modal>
